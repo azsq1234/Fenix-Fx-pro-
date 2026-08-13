@@ -2,22 +2,21 @@ import os
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import logging
-import asyncio
 import pandas as pd
 import ta
 import numpy as np
-from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes
+from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
-# 🔑 تم إدراج التوكين الخاص بك بنجاح
-TELEGRAM_BOT_TOKEN = "8902321690:AAEVLPl1pxx_IqgDKHMtB5wxW55H59nlSzI"
+# 🔑 التوكين الجديد الخاص بك
+TELEGRAM_BOT_TOKEN = "8902321690:AAGscp65vSOSMRxTpAYAK5IPHZx5ThHAW48"
 
-# خادم وهمي لضمان استمرار عمل الخدمة على Render
+# --- سيرفر فحص الصحة لضمان العمل على Render ---
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"Fenix Fx Pro Bot is active!")
+        self.wfile.write(b"Fenix Fx Pro is Running!")
 
     def log_message(self, format, *args):
         return
@@ -27,11 +26,11 @@ def start_health_server():
     server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
     server.serve_forever()
 
-# تشغيل خادم الفحص في الخلفية
 threading.Thread(target=start_health_server, daemon=True).start()
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
+# --- محرك تحليل SMC والتحليل الفني ---
 class SMCAnalyzer:
     @staticmethod
     def get_market_analysis(symbol="EUR/USD"):
@@ -64,38 +63,56 @@ class SMCAnalyzer:
             'structure': structure, 'rsi': rsi, 'sl': sl, 'tp1': tp1, 'tp2': tp2
         }
 
+# --- واجهة الأزرار والتعامل مع الأوامر ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = (
-        "🔥 **Fenix Fx Pro Bot** 🔥\n\n"
-        "أهلاً بك! البوت يعمل بنجاح سحابياً على مدار الساعة.\n\n"
-        "أرسل الأمر /signal للحصول على إشارة التداول الحالية."
-    )
-    await update.message.reply_text(msg, parse_mode='Markdown')
+    keyboard = [
+        [KeyboardButton("📊 طلب إشارة تداول")],
+        [KeyboardButton("ℹ️ حول البوت"), KeyboardButton("⚠️ إدارة المخاطر")]
+    ]
+    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
-async def send_signal(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    data = SMCAnalyzer.get_market_analysis("EUR/USD")
-    
-    reply = (
-        f"🦅 **إشارة تداول - Fenix Fx Pro** 🦅\n"
-        f"───────────────────────\n"
-        f"🔤 **الزوج:** {data['symbol']}\n"
-        f"🎯 **النوع:** {data['signal']}\n"
-        f"💵 **سعر الدخول:** `{data['price']:.5f}`\n\n"
-        f"🏛 **هيكل SMC:** {data['structure']}\n"
-        f"📊 **مؤشر RSI:** {data['rsi']:.1f}\n"
-        f"───────────────────────\n"
-        f"🎯 **الهدف 1:** `{data['tp1']:.5f}`\n"
-        f"🎯 **الهدف 2:** `{data['tp2']:.5f}`\n"
-        f"🛑 **وقف الخسارة:** `{data['sl']:.5f}`\n"
-        f"───────────────────────\n"
-        f"💡 *إدارة المخاطر:* 1% إلى 2% من رأس المال."
+    welcome_text = (
+        "🦅 **مرحباً بك في Fenix Fx Pro** 🦅\n\n"
+        "النظام المطور لتحليل الأسواق المالية بناءً على **Smart Money Concepts (SMC)** والسيولة.\n\n"
+        "👇 **استخدم الأزرار بالأسفل للتنقل والحصول على الإشارات:**"
     )
-    await update.message.reply_text(reply, parse_mode='Markdown')
+    await update.message.reply_text(welcome_text, reply_markup=reply_markup, parse_mode='Markdown')
+
+async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
+
+    if text == "📊 طلب إشارة تداول" or text == "/signal":
+        await update.message.reply_text("⏳ جاري تحليل بيانات السوق وهيكل SMC...")
+        data = SMCAnalyzer.get_market_analysis("EUR/USD")
+        
+        reply = (
+            f"🦅 **إشارة تداول - Fenix Fx Pro** 🦅\n"
+            f"───────────────────────\n"
+            f"🔤 **الزوج:** {data['symbol']}\n"
+            f"🎯 **النوع:** {data['signal']}\n"
+            f"💵 **سعر الدخول:** `{data['price']:.5f}`\n\n"
+            f"🏛 **هيكل SMC:** {data['structure']}\n"
+            f"📊 **مؤشر RSI:** {data['rsi']:.1f}\n"
+            f"───────────────────────\n"
+            f"🎯 **الهدف 1:** `{data['tp1']:.5f}`\n"
+            f"🎯 **الهدف 2:** `{data['tp2']:.5f}`\n"
+            f"🛑 **وقف الخسارة:** `{data['sl']:.5f}`\n"
+            f"───────────────────────\n"
+            f"💡 *إدارة المخاطر:* 1% إلى 2% من رأس المال."
+        )
+        await update.message.reply_text(reply, parse_mode='Markdown')
+
+    elif text == "ℹ️ حول البوت":
+        await update.message.reply_text("🤖 **Fenix Fx Pro**: بوت ذكي يحلل اتجاهات السيولة ومناطق العرض والطلب لتوفير إشارات تداول عالية الدقة.")
+
+    elif text == "⚠️ إدارة المخاطر":
+        await update.message.reply_text("📌 **قواعد التداول:**\n1. لا تخاطر بأكثر من 1-2% لكل صفقة.\n2. التزم دائماً بوقف الخسارة (SL).")
 
 def main():
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("signal", send_signal))
+    app.add_handler(CommandHandler("signal", handle_messages))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_messages))
     app.run_polling()
 
 if __name__ == "__main__":
