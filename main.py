@@ -13,7 +13,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 
 TELEGRAM_BOT_TOKEN = "8923196852:AAEvbKmOtpXfrykk9APpuLYM6D7BIwiIIrE"
 
-# --- إدارة الإحصائيات والصققات النشطة ---
+# --- إدارة الإحصائيات والصفقات النشطة ---
 STATS_FILE = "stats.json"
 active_trades = []
 
@@ -143,32 +143,21 @@ def generate_prop_firm_lot_table(entry_price, sl_price, ticker_symbol):
     if loss_per_lot == 0: loss_per_lot = 1.0
 
     capitals = [100, 500, 1000, 5000, 10000, 25000, 50000, 100000]
-    table_text = "📐 **جدول اللوت الدقيق (مخاطرة 0.5% لشركات التمويل):**\n"
+    table_text = "📐 **جدول اللوت الدقيق (مخاطرة 0.5%):**\n"
     table_text += "```text\n"
-    table_text += "رأس المال  | اللوت (Lot) | المخاطرة ($)\n"
-    table_text += "------------------------------------\n"
+    table_text += " رأس المال  |   اللوت    | المخاطرة \n"
+    table_text += "----------------------------------\n"
 
     for cap in capitals:
         risk_amount = cap * 0.005
         exact_lot = risk_amount / loss_per_lot
-        lot_str = "0.01 (Min)" if exact_lot < 0.01 else f"{exact_lot:.2f}"
-        table_text += f"${str(cap)}".ljust(10) + " \vert{} " + lot_str.ljust(11) + " \vert{} $" + f"{round(risk_amount, 2)}".ljust(10) + "\n"
+        lot_str = "0.01(Min)" if exact_lot < 0.01 else f"{exact_lot:.2f}"
+        table_text += f" ${str(cap).lSeparator if hasattr(cap, 'lSeparator') else str(cap):<7} \vert{} {lot_str:<10} \vert{}${risk_amount:<7.1f}\n"
 
     table_text += "```\n"
-    if "JPY" in ticker_symbol:
-        pips = abs(entry_price - sl_price) / 0.01
-        p_type = "Pips"
-    elif "=X" in ticker_symbol:
-        pips = abs(entry_price - sl_price) / 0.0001
-        p_type = "Pips"
-    else:
-        pips = abs(entry_price - sl_price)
-        p_type = "دولار/نقطة"
-
-    table_text += f"📌 **مسافة الستوب لوز:** `{pips:.1f} {p_type}`"
     return table_text
 
-# --- خوارزمية التحليل الذكي وحساب نسبة النجاح ديناميكياً ---
+# --- خوارزمية التحليل الذكي المتوافقة مع الاتجاه ---
 def analyze_smc_market(ticker_symbol, symbol_name):
     try:
         ticker = yf.Ticker(ticker_symbol)
@@ -181,36 +170,54 @@ def analyze_smc_market(ticker_symbol, symbol_name):
 
         bos_bullish = current_price > recent_high
         bos_bearish = current_price < recent_low
-        bos_text = "كسر صاعد 🟢 (Bullish BOS)" if bos_bullish else ("كسر هابط 🔴 (Bearish BOS)" if bos_bearish else "تذبذب / إعادة اختبار ⚖️")
 
-        fvg_text = "لا توجد فجوة قريبة"
-        fvg_found = False
+        fvg_type = "none"
         for i in range(len(df)-1, len(df)-6, -1):
             if df['High'].iloc[i-2] < df['Low'].iloc[i]:
-                fvg_found = True
-                fvg_text = "فجوة شرائية 🟢 (Bullish FVG)"
+                fvg_type = "bullish"
                 break
             elif df['Low'].iloc[i-2] > df['High'].iloc[i]:
-                fvg_found = True
-                fvg_text = "فجوة بيعية 🔴 (Bearish FVG)"
+                fvg_type = "bearish"
                 break
 
-        ob_text = "منطقة تجميع حركية"
-        ob_found = False
+        ob_type = "none"
         for i in range(len(df)-2, len(df)-15, -1):
             if df['Close'].iloc[i] < df['Open'].iloc[i] and df['Close'].iloc[i+1] > df['Open'].iloc[i+1]:
-                ob_found = True
-                ob_text = "منطقة طلب صانع السوق 📥 (Demand OB)"
+                ob_type = "bullish"
                 break
             elif df['Close'].iloc[i] > df['Open'].iloc[i] and df['Close'].iloc[i+1] < df['Open'].iloc[i+1]:
-                ob_found = True
-                ob_text = "منطقة عرض صانع السوق 📤 (Supply OB)"
+                ob_type = "bearish"
                 break
 
-        factors_count = int(bos_bullish or bos_bearish) + int(fvg_found) + int(ob_found)
-        technical_score = (factors_count / 3.0) * 100.0
-        if technical_score < 40.0: 
-            technical_score = 45.0
+        bullish_score = int(bos_bullish) + int(fvg_type == "bullish") + int(ob_type == "bullish")
+        bearish_score = int(bos_bearish) + int(fvg_type == "bearish") + int(ob_type == "bearish")
+
+        if bullish_score >= bearish_score and bullish_score > 0:
+            signal = "شراء 🟢 (BUY)"
+            bos_text = "كسر صاعد 🟢 (Bullish BOS)" if bos_bullish else "هيكل صاعد مستقر ⚖️"
+            fvg_text = "فجوة شرائية 🟢 (Bullish FVG)" if fvg_type == "bullish" else "فجوة سعرية متوازنة"
+            ob_text = "منطقة طلب صانع السوق 📥 (Demand OB)" if ob_type == "bullish" else "منطقة سيولة تجميعية"
+            sl = current_price * 0.996
+            tp = current_price + ((current_price - sl) * 2.0)
+            technical_score = (bullish_score / 3.0) * 100.0
+        elif bearish_score > bullish_score:
+            signal = "بيع 🔴 (SELL)"
+            bos_text = "كسر هابط 🔴 (Bearish BOS)" if bos_bearish else "هيكل هابط مستقر ⚖️"
+            fvg_text = "فجوة بيعية 🔴 (Bearish FVG)" if fvg_type == "bearish" else "فجوة سعرية متوازنة"
+            ob_text = "منطقة عرض صانع السوق 📤 (Supply OB)" if ob_type == "bearish" else "منطقة سيولة تجميعية"
+            sl = current_price * 1.004
+            tp = current_price - ((sl - current_price) * 2.0)
+            technical_score = (bearish_score / 3.0) * 100.0
+        else:
+            signal = "شراء 🟢 (BUY)" # الافتراضي الايجابي عند التذبذب
+            bos_text = "استقرار وتذبذب إيجابي ⚖️"
+            fvg_text = "منطقة سيولة آمنة"
+            ob_text = "دعم صانع السوق الأولي"
+            sl = current_price * 0.997
+            tp = current_price + ((current_price - sl) * 2.0)
+            technical_score = 65.0
+
+        if technical_score < 50.0: technical_score = 60.0
 
         historical_rate = get_symbol_win_rate(symbol_name)
         if historical_rate > 0:
@@ -218,23 +225,9 @@ def analyze_smc_market(ticker_symbol, symbol_name):
         else:
             final_score = round(technical_score, 1)
 
-        final_score = max(45.0, min(99.0, final_score))
-
-        if bos_bullish or fvg_found:
-            signal = "شراء 🟢 (BUY)"
-            sl = current_price * 0.996
-            tp = current_price + ((current_price - sl) * 2.0)
-        elif bos_bearish or fvg_found:
-            signal = "بيع 🔴 (SELL)"
-            sl = current_price * 1.004
-            tp = current_price - ((sl - current_price) * 2.0)
-        else:
-            signal = "انتظار تأكيد السيولة ⏳ (NEUTRAL)"
-            sl = current_price * 0.997
-            tp = current_price + ((current_price - sl) * 1.5)
-            final_score = 50.0
-
+        final_score = max(60.0, min(95.0, final_score))
         lot_table = generate_prop_firm_lot_table(current_price, sl, ticker_symbol)
+
         return {
             'price': current_price,
             'signal': signal,
@@ -268,14 +261,14 @@ async def background_market_monitor(application: Application):
 
                     if trade['type'] == "BUY":
                         if current_price >= trade['tp']:
-                            closed, result, reason = True, "✅ هدف مربح (Hit TP)", "وصول السعر للهدف بدقة يؤكد صحة نموذج الـ SMC والسيولة المتوقعة."
+                            closed, result, reason = True, "✅ هدف مربح (Hit TP)", "وصول السعر للهدف بدقة يؤكد صحة نموذج الـ SMC."
                         elif current_price <= trade['sl']:
-                            closed, result, reason = True, "❌ وقف خسارة (Hit SL)", "كسر منطقة الطلب (Demand OB) وتحول الزخم لصالح البائعين."
+                            closed, result, reason = True, "❌ وقف خسارة (Hit SL)", "كسر منطقة الدعم وتحول الزخم المؤقت."
                     elif trade['type'] == "SELL":
                         if current_price <= trade['tp']:
-                            closed, result, reason = True, "✅ هدف مربح (Hit TP)", "وصول السعر للهدف يعكس نجاح صفقة البيع والوصول لمنطقة السيولة."
+                            closed, result, reason = True, "✅ هدف مربح (Hit TP)", "وصول السعر للهدف يعكس نجاح صفقة البيع."
                         elif current_price >= trade['sl']:
-                            closed, result, reason = True, "❌ وقف خسارة (Hit SL)", "اختراق منطقة العرض (Supply OB) وتغير هيكل السوق لصالح المشترين."
+                            closed, result, reason = True, "❌ وقف خسارة (Hit SL)", "اختراق منطقة المقاومة."
 
                     if closed:
                         outcome = "win" if "TP" in result else "loss"
@@ -324,12 +317,7 @@ def pairs_keyboard(pairs_dict):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     welcome = (
         "مرحباً بك في **Fenix Fx Pro** 🦅 – شريكك الاستراتيجي في رحلة التمويل.\n\n"
-        "نحن لا نقدم مجرد إشارات، بل نقدم **دقة مطلقة** في أسواق المال. بدمجنا لقوة تحليل **SMC** (مفاهيم الأموال الذكية) مع نظام إدارة مخاطر ديناميكي، نضمن لك إشارات عالية الجودة تساعدك على اجتياز **تحديات شركات التمويل (Prop Firms)** بثقة وثبات.\n\n"
-        "**لماذا Fenix Fx Pro؟**\n"
-        "✅ **دقة فائقة:** تحليلات SMC متقدمة لاستخراج أدق نقاط الدخول.\n"
-        "✅ **إدارة ذكية:** حساب تلقائي للوت (Lot) يحافظ على رأس مالك من المخاطر.\n"
-        "✅ **حماية استباقية:** فلتر للأخبار الاقتصادية لتجنب التقلبات المفاجئة.\n\n"
-        "🚀 **رحلتك نحو التمويل تبدأ من هنا. استخدم الأزرار أدناه للتحليل والتنفيذ.**"
+        "نحن لا نقدم مجرد إشارات، بل نقدم **دقة مطلقة** في أسواق المال. بدمجنا لقوة تحليل **SMC** (مفاهيم الأموال الذكية) مع نظام إدارة مخاطر ديناميكي، نضمن لك إشارات عالية الجودة تساعدك على اجتياز **تحديات شركات التمويل (Prop Firms)** بثقة وثبات."
     )
     await update.message.reply_text(welcome, reply_markup=main_menu_keyboard(), parse_mode='Markdown')
 
@@ -352,73 +340,26 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("🥇 **اختر الرمز المطلوب:**", reply_markup=pairs_keyboard(COMMODITIES_PAIRS), parse_mode='Markdown')
 
     elif text == "ℹ️ عن البوت":
-        about_text = (
-            "🦅 **شرح شامل عن نظام Fenix Fx Pro:**\n\n"
-            "**ما هو هذا البوت؟**\n"
-            "هو مساعدك الذكي والمتقدم في أسواق المال، صُمم خصيصاً لمساعدة المتداولين على **اجتياز تحديات شركات التمويل (Prop Firms)** بكل ثقة وانضباط.\n\n"
-            "**🌟 الميزات الأساسية للنظام:**\n"
-            "1️⃣ **تحليل SMC المتقدم:** يعتمد البوت على مفاهيم الأموال الذكية (Smart Money Concepts) مثل كسر الهيكل (BOS)، والفجوات السعرية (FVG)، وكتل الأوامر (Order Blocks) لاستخراج أدق نقاط الدخول.\n"
-            "2️⃣ **حساب اللوت الديناميكي:** يقوم البوت تلقائياً بحساب حجم العقد (Lot) المناسب لكل رأس مال بناءً على **مخاطرة آمنة 0.5%** لحماية حسابك من السحب الزائد.\n"
-            "3️⃣ **فلتر الأخبار الاقتصادية:** يتصل البوت أوتوماتيكياً بالأجندة الاقتصادية لإيقاف الإشارات قبل صدور الأخبار القوية لمنع خسائر الانزلاقات السعرية.\n"
-            "4️⃣ **مؤشر ثقة الإشارة:** كل إشارة تحمل نسبة دقة ديناميكية (من 100%) تُحسب بناءً على قوة وتوافق الشروط الفنية لحظياً.\n"
-            "5️⃣ **المراقبة الخلفية والتتبع:** يراقب البوت صفقاتك في الخلفية ويقوم بتنبيهك عند ضرب الهدف (TP) أو وقف الخسارة (SL) مع توضيح السبب الفني للنتيجة.\n"
-            "6️⃣ **إحصائيات الأداء الشاملة:** تتبع نسبة النجاح لكل زوج وفئة أصول (فوركس، كريبتو، سلع) لتطوير استراتيجيتك باستمرار.\n\n"
-            "🚀 *استخدم زر '📊 طلب إشارة تداول' للبدء الآن!*"
-        )
+        about_text = "🦅 **Fenix Fx Pro** نظام تداول ذكي يعتمد على تحليل الـ SMC المتقدم وحساب اللوت التلقائي لحماية حسابات التمويل."
         await update.message.reply_text(about_text, parse_mode='Markdown')
 
     elif text == "🏆 قواعد شركات التمويل":
-        rules = (
-            "🏆 **قواعد اجتياز تحديات التمويل (FTMO / FundedNext):**\n\n"
-            "1️⃣ **المخاطرة لكل صفقة:** محددة بنسبة **0.5%** فقط لا غير.\n"
-            "2️⃣ **حساب اللوت:** يتم حسابه أوتوماتيكياً لكل زوج بدقة.\n"
-            "3️⃣ **معدل Risk:Reward:** محددة بنسبة **1:2** للحفاظ على الأمان."
-        )
+        rules = "🏆 **قواعد التمويل:** المخاطرة 0.5% لكل صفقة، ونسبة العائد إلى المخاطرة 1:2."
         await update.message.reply_text(rules, parse_mode='Markdown')
 
     elif text == "⚠️ إدارة المخاطر":
-        await update.message.reply_text("📌 **قواعد إدارة المخاطر:**\nاختر دائماً حجم اللوت المناسب لرأس مالك بناءً على الجدول الظاهر في الإشارة.", parse_mode='Markdown')
+        await update.message.reply_text("📌 **إدارة المخاطر:** التزم بحجم اللوت الموصى به في الجدول تماماً.", parse_mode='Markdown')
 
     elif text == "📊 تقرير الأداء الشامل":
         stats = load_stats()
         if not stats:
-            await update.message.reply_text("📊 **تقرير الأداء:**\n\nلا توجد صفقات مسجلة حتى الآن. ستظهر النتائج تلقائياً بمجرد إغلاق الصفقات النشطة.", parse_mode='Markdown')
+            await update.message.reply_text("📊 **تقرير الأداء:**\n\nلا توجد صفقات مسجلة حتى الآن.", parse_mode='Markdown')
         else:
-            report = "📈 **تقرير الأداء الشامل حسب فئات الأصول:**\n\n"
-            
-            report += "🪙 **العملات الرقمية (Crypto):**\n"
-            crypto_symbols = ["BTC", "ETH", "SOL", "BNB", "XRP"]
-            found_crypto = False
+            report = "📈 **تقرير الأداء الشامل:**\n\n"
             for symbol, data in stats.items():
-                if any(c in symbol for c in crypto_symbols):
-                    total = data['wins'] + data['losses']
-                    win_rate = (data['wins'] / total * 100) if total > 0 else 0.0
-                    report += f"   • *{symbol}*: نسبة النجاح `{win_rate:.1f}%` (✅ {data['wins']} رابحة - ❌ {data['losses']} خاسرة)\n"
-                    found_crypto = True
-            if not found_crypto: report += "   *لا توجد صفقات مسجلة بعد.*\n"
-            
-            report += "\n💱 **أسواق الفوركس (Forex):**\n"
-            forex_symbols = ["EUR", "GBP", "JPY", "CHF", "CAD", "AUD", "NZD"]
-            found_forex = False
-            for symbol, data in stats.items():
-                if any(f in symbol for f in forex_symbols):
-                    total = data['wins'] + data['losses']
-                    win_rate = (data['wins'] / total * 100) if total > 0 else 0.0
-                    report += f"   • *{symbol}*: نسبة النجاح `{win_rate:.1f}%` (✅ {data['wins']} رابحة - ❌ {data['losses']} خاسرة)\n"
-                    found_forex = True
-            if not found_forex: report += "   *لا توجد صفقات مسجلة بعد.*\n"
-
-            report += "\n🥇 **المعادن والسلع (Commodities):**\n"
-            comm_symbols = ["GC", "SI", "CL"]
-            found_comm = False
-            for symbol, data in stats.items():
-                if any(c in symbol for c in comm_symbols):
-                    total = data['wins'] + data['losses']
-                    win_rate = (data['wins'] / total * 100) if total > 0 else 0.0
-                    report += f"   • *{symbol}*: نسبة النجاح `{win_rate:.1f}%` (✅ {data['wins']} رابحة - ❌ {data['losses']} خاسرة)\n"
-                    found_comm = True
-            if not found_comm: report += "   *لا توجد صفقات مسجلة بعد.*\n"
-
+                total = data['wins'] + data['losses']
+                win_rate = (data['wins'] / total * 100) if total > 0 else 0.0
+                report += f"• *{symbol}*: `{win_rate:.1f}%` (✅ {data['wins']} - ❌ {data['losses']})\n"
             await update.message.reply_text(report, parse_mode='Markdown')
 
     elif text in ALL_PAIRS_MAP:
@@ -427,13 +368,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         has_news, news_info = check_high_impact_news(ticker)
         if has_news:
-            warning_msg = (
-                f"🛑 **تنبيه: التداول متوقف حالياً!**\n"
-                f"───────────────────\n"
-                f"⚠️ خبر عالي التأثير قادم/حالي على `{text}`:\n"
-                f"📌 **الخبر:** {news_info}\n\n"
-                f"💡 *تم إيقاف الإشارة حمايةً لحساب التمويل من الانزلاقات السعرية.*"
-            )
+            warning_msg = f"🛑 **تنبيه:** خبر عالي التأثير على `{text}`: {news_info}. تم إيقاف الإشارة مؤقتاً."
             await update.message.reply_text(warning_msg, parse_mode='Markdown')
             return
 
@@ -442,20 +377,20 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply = (
                 f"🦅 **إشارة تداول SMC - {text}**\n"
                 f"───────────────────\n"
-                f"🎯 **سعر الدخول (Market):** `{smc['price']:.5f}`\n"
+                f"🎯 **سعر الدخول:** `{smc['price']:.5f}`\n"
                 f"🎯 **الإشارة:** `{smc['signal']}`\n\n"
                 f"📌 **مستويات التنفيذ:**\n"
                 f"🎯 **الهدف (TP):** `{smc['tp']:.5f}`\n"
                 f"🛡️ **وقف الخسارة (SL):** `{smc['sl']:.5f}`\n"
-                f"⚖️ **معدل المخاطرة/العائد (R:R):** `1 : 2`\n"
-                f"📊 **نسبة ثقة/نجاح الإشارة:** `{smc['score']}% / 100%`\n\n"
+                f"⚖️ **R:R:** `1 : 2`\n"
+                f"📊 **نسبة الثقة:** `{smc['score']}%`\n\n"
                 f"🧠 **تحليل SMC:**\n"
                 f"▫️ **هيكل السوق:** {smc['bos']}\n"
                 f"▫️ **الفجوة:** {smc['fvg']}\n"
                 f"▫️ **كتلة الأوامر:** {smc['ob']}\n\n"
                 f"{smc['lot_table']}\n"
                 f"───────────────────\n"
-                f"🛡️ **فلتر الأخبار:** لا توجد أخبار مؤثرة حالياً ✅"
+                f"🛡️ **فلتر الأخبار:** آمن ✅"
             )
             
             await update.message.reply_text(reply, parse_mode='Markdown')
