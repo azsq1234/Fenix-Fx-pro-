@@ -1,5 +1,4 @@
 python-telegram-bot
+yfinance
 pandas
-ta
-numpy
-requests
+pandas-ta
