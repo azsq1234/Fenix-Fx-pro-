@@ -8,15 +8,14 @@ import numpy as np
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
-# 🔑 التوكين الجديد المربوط
 TELEGRAM_BOT_TOKEN = "8482434263:AAG1N_R8AEZCKmLWDlyEA2HE8VYT1wMewgY"
 
-# --- سيرفر فحص الصحة لضمان الاستمرارية على Render ---
+# --- سيرفر فحص الصحة لضمان استمرارية التشغيل على Render ---
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"Fenix Fx Pro is Running!")
+        self.wfile.write(b"Fenix Fx Pro is Active!")
 
     def log_message(self, format, *args):
         return
@@ -30,7 +29,7 @@ threading.Thread(target=start_health_server, daemon=True).start()
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
-# --- محرك تحليل SMC والتحليل الفني ---
+# --- محرك تحليل SMC ---
 class SMCAnalyzer:
     @staticmethod
     def get_market_analysis(symbol="EUR/USD"):
@@ -63,7 +62,6 @@ class SMCAnalyzer:
             'structure': structure, 'rsi': rsi, 'sl': sl, 'tp1': tp1, 'tp2': tp2
         }
 
-# --- واجهة الأزرار والتعامل مع الأوامر ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [KeyboardButton("📊 طلب إشارة تداول")],
@@ -109,7 +107,18 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("📌 **قواعد التداول:**\n1. لا تخاطر بأكثر من 1-2% لكل صفقة.\n2. التزم دائماً بوقف الخسارة (SL).")
 
 def main():
-    app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+    # تم تمديد مهلات الاتصال لمنع مشكلة Timeout
+    app = (
+        Application.builder()
+        .token(TELEGRAM_BOT_TOKEN)
+        .connect_timeout(30.0)
+        .read_timeout(30.0)
+        .write_timeout(30.0)
+        .get_updates_connect_timeout(30.0)
+        .get_updates_read_timeout(30.0)
+        .build()
+    )
+
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("signal", handle_messages))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_messages))
