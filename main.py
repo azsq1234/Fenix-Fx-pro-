@@ -4,6 +4,7 @@ import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import logging
 from datetime import datetime, timezone
+import asyncio
 import requests
 import yfinance as yf
 import pandas as pd
@@ -248,50 +249,55 @@ def analyze_smc_market(ticker_symbol, symbol_name):
     except Exception:
         return None
 
-# --- حلقة المراقبة الخلفية ---
-async def monitor_market_continuously(context: ContextTypes.DEFAULT_TYPE):
+# --- حلقة المراقبة الخلفية باستخدام Asyncio ---
+async def background_market_monitor(application: Application):
     global active_trades
-    if not active_trades: return
-
-    for trade in active_trades[:]:
+    await asyncio.sleep(10)
+    while True:
         try:
-            ticker = yf.Ticker(trade['symbol_yfinance'])
-            df_hist = ticker.history(period="1m")
-            if df_hist.empty: continue
-            current_price = df_hist['Close'].iloc[-1]
-            
-            closed = False
-            result = ""
-            reason = ""
+            if active_trades:
+                for trade in active_trades[:]:
+                    ticker = yf.Ticker(trade['symbol_yfinance'])
+                    df_hist = ticker.history(period="1m")
+                    if df_hist.empty: continue
+                    current_price = df_hist['Close'].iloc[-1]
+                    
+                    closed = False
+                    result = ""
+                    reason = ""
 
-            if trade['type'] == "BUY":
-                if current_price >= trade['tp']:
-                    closed, result, reason = True, "✅ هدف مربح (Hit TP)", "وصول السعر للهدف بدقة يؤكد صحة نموذج الـ SMC والسيولة المتوقعة."
-                elif current_price <= trade['sl']:
-                    closed, result, reason = True, "❌ وقف خسارة (Hit SL)", "كسر منطقة الطلب (Demand OB) وتحول الزخم لصالح البائعين."
-            elif trade['type'] == "SELL":
-                if current_price <= trade['tp']:
-                    closed, result, reason = True, "✅ هدف مربح (Hit TP)", "وصول السعر للهدف يعكس نجاح صفقة البيع والوصول لمنطقة السيولة."
-                elif current_price >= trade['sl']:
-                    closed, result, reason = True, "❌ وقف خسارة (Hit SL)", "اختراق منطقة العرض (Supply OB) وتغير هيكل السوق لصالح المشترين."
+                    if trade['type'] == "BUY":
+                        if current_price >= trade['tp']:
+                            closed, result, reason = True, "✅ هدف مربح (Hit TP)", "وصول السعر للهدف بدقة يؤكد صحة نموذج الـ SMC والسيولة المتوقعة."
+                        elif current_price <= trade['sl']:
+                            closed, result, reason = True, "❌ وقف خسارة (Hit SL)", "كسر منطقة الطلب (Demand OB) وتحول الزخم لصالح البائعين."
+                    elif trade['type'] == "SELL":
+                        if current_price <= trade['tp']:
+                            closed, result, reason = True, "✅ هدف مربح (Hit TP)", "وصول السعر للهدف يعكس نجاح صفقة البيع والوصول لمنطقة السيولة."
+                        elif current_price >= trade['sl']:
+                            closed, result, reason = True, "❌ وقف خسارة (Hit SL)", "اختراق منطقة العرض (Supply OB) وتغير هيكل السوق لصالح المشترين."
 
-            if closed:
-                outcome = "win" if "TP" in result else "loss"
-                update_symbol_stats(trade['symbol'], outcome)
-                win_rate = get_symbol_win_rate(trade['symbol'])
-                
-                msg = (
-                    f"📊 **تحديث صفقة {trade['name']}**\n"
-                    f"───────────────────\n"
-                    f"النتيجة: **{result}**\n"
-                    f"💡 **السبب:** {reason}\n"
-                    f"📌 السعر عند الإغلاق: `{current_price:.5f}`\n\n"
-                    f"📈 **نسبة نجاح الزوج التاريخية ({trade['symbol']}):** `{win_rate:.1f}%`"
-                )
-                await context.bot.send_message(chat_id=trade['chat_id'], text=msg, parse_mode='Markdown')
-                active_trades.remove(trade)
+                    if closed:
+                        outcome = "win" if "TP" in result else "loss"
+                        update_symbol_stats(trade['symbol'], outcome)
+                        win_rate = get_symbol_win_rate(trade['symbol'])
+                        
+                        msg = (
+                            f"📊 **تحديث صفقة {trade['name']}**\n"
+                            f"───────────────────\n"
+                            f"النتيجة: **{result}**\n"
+                            f"💡 **السبب:** {reason}\n"
+                            f"📌 السعر عند الإغلاق: `{current_price:.5f}`\n\n"
+                            f"📈 **نسبة نجاح الزوج التاريخية ({trade['symbol']}):** `{win_rate:.1f}%`"
+                        )
+                        await application.bot.send_message(chat_id=trade['chat_id'], text=msg, parse_mode='Markdown')
+                        active_trades.remove(trade)
         except Exception as e:
             print(f"Error in monitor: {e}")
+        await asyncio.sleep(60)
+
+async def post_init(application: Application):
+    asyncio.create_task(background_market_monitor(application))
 
 # --- الأزرار والقوائم ---
 def main_menu_keyboard():
@@ -472,14 +478,12 @@ def main():
     app = (
         Application.builder()
         .token(TELEGRAM_BOT_TOKEN)
+        .post_init(post_init)
         .connect_timeout(30.0)
         .read_timeout(30.0)
         .write_timeout(30.0)
         .build()
     )
-    
-    job_queue = app.job_queue
-    job_queue.run_repeating(monitor_market_continuously, interval=60, first=10)
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT, handle_message))
