@@ -5,7 +5,7 @@ import logging
 from datetime import datetime, timezone
 import requests
 import yfinance as yf
-import pandas_ta as ta
+import pandas as pd
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
@@ -37,7 +37,6 @@ COMMODITIES_PAIRS = {
     "🛢 النفط (Oil)": "CL=F"
 }
 
-# دمج الأكواد للبحث
 ALL_PAIRS_MAP = {**FOREX_PAIRS, **CRYPTO_PAIRS, **COMMODITIES_PAIRS}
 
 MINUTES_BEFORE_NEWS = 30
@@ -48,7 +47,7 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"Fenix Fx Pro Categorized Active!")
+        self.wfile.write(b"Fenix Fx Pro Dynamic Lot Engine Active!")
 
     def log_message(self, format, *args): return
 
@@ -60,11 +59,11 @@ def start_health_server():
 threading.Thread(target=start_health_server, daemon=True).start()
 logging.basicConfig(level=logging.INFO)
 
-# --- دالة فحص الأخبار (خاصة بالفوركس) ---
+# --- فلتر الأخبار عالية التأثير ---
 def check_high_impact_news(symbol):
     try:
         if "=X" not in symbol:
-            return False, "" # استثناء الكريبتو والسلع من فلتر أخبار الفوركس
+            return False, ""
         clean_symbol = symbol.replace("=X", "")
         currency1, currency2 = clean_symbol[:3], clean_symbol[3:]
 
@@ -86,34 +85,166 @@ def check_high_impact_news(symbol):
     except Exception:
         return False, ""
 
-# --- دالة جلب الأسعار المباشرة ---
-def get_real_market_data(ticker_symbol):
+# --- الخوارزمية الديناميكية لحساب الخسارة لكل عقد قياسي (1.00 Lot) ---
+def calculate_loss_per_standard_lot(ticker_symbol, entry_price, sl_price):
+    price_diff = abs(entry_price - sl_price)
+    if price_diff == 0:
+        return 1.0
+
+    # 1. السلع والمعادن (حجم العقد الموحد عالمياً)
+    if ticker_symbol == "GC=F":      # الذهب (1 Lot = 100 oz)
+        return price_diff * 100.0
+    elif ticker_symbol == "SI=F":    # الفضة (1 Lot = 5000 oz)
+        return price_diff * 5000.0
+    elif ticker_symbol == "CL=F":    # النفط (1 Lot = 1000 barrels)
+        return price_diff * 1000.0
+
+    # 2. العملات الرقمية (1 Lot = 1 Unit)
+    elif "-USD" in ticker_symbol:
+        return price_diff * 1.0
+
+    # 3. أسواق الفوركس (حساب ديناميكي حسب زوج العملة)
+    elif "=X" in ticker_symbol:
+        clean_symbol = ticker_symbol.replace("=X", "")
+        base_curr = clean_symbol[:3]
+        quote_curr = clean_symbol[3:]
+
+        # أ) الأزواج المقومة بالدولار (EUR/USD, GBP/USD, AUD/USD, NZD/USD)
+        if quote_curr == "USD":
+            return price_diff * 100000.0
+
+        # ب) الأزواج المباشرة بالدولار (USD/JPY, USD/CAD, USD/CHF)
+        elif base_curr == "USD":
+            return (price_diff * 100000.0) / entry_price
+
+        # ج) الأزواج التقاطعية (مثل EUR/GBP)
+        elif quote_curr == "GBP":
+            return price_diff * 100000.0 * 1.28  # تحويل الجنيه إلى دولار بسعر تقريبي
+        else:
+            return price_diff * 100000.0
+
+    return price_diff * 100.0
+
+# --- دالة توليد جدول اللوت لشركات التمويل بدون أخطاء ---
+def generate_prop_firm_lot_table(entry_price, sl_price, ticker_symbol):
+    loss_per_lot = calculate_loss_per_standard_lot(ticker_symbol, entry_price, sl_price)
+    if loss_per_lot == 0:
+        loss_per_lot = 1.0
+
+    capitals = [100, 500, 1000, 5000, 10000, 25000, 50000, 100000]
+    table_text = "📐 **جدول اللوت الدقيق (مخاطرة 0.5% لشركات التمويل):**\n"
+    table_text += "```text\n"
+    table_text += f"رأس المال  | اللوت (Lot) | المخاطرة ($)\n"
+    table_text += f"------------------------------------\n"
+
+    for cap in capitals:
+        risk_amount = cap * 0.005  # مخاطرة 0.5% صارمة
+        exact_lot = risk_amount / loss_per_lot
+
+        if exact_lot < 0.01:
+            lot_str = "0.01 (Min)"
+        else:
+            lot_str = f"{exact_lot:.2f}"
+
+        table_text += f"${cap:<8,d} \vert{} {lot_str:<11} \vert{}${risk_amount:.2f}\n"
+
+    table_text += "```\n"
+
+    # حساب المسافة بالنقاط/البيبس حسب نوع الزوج
+    if "JPY" in ticker_symbol:
+        pips = abs(entry_price - sl_price) / 0.01
+        p_type = "Pips"
+    elif "=X" in ticker_symbol:
+        pips = abs(entry_price - sl_price) / 0.0001
+        p_type = "Pips"
+    else:
+        pips = abs(entry_price - sl_price)
+        p_type = "دولار/نقطة"
+
+    table_text += f"📌 **مسافة الستوب لوز:** `{pips:.1f} {p_type}`"
+    return table_text
+
+# --- خوارزمية التحليل الذكي بناءً على SMC ---
+def analyze_smc_market(ticker_symbol, symbol_name):
     try:
         ticker = yf.Ticker(ticker_symbol)
-        df = ticker.history(period="5d", interval="1h")
-        if df.empty: return None
-        df['RSI'] = ta.rsi(df['Close'], length=14)
-        df['EMA20'] = ta.ema(df['Close'], length=20)
-        data = df.iloc[-1]
-        return {'price': data['Close'], 'rsi': data['RSI'], 'ema': data['EMA20']}
+        df = ticker.history(period="10d", interval="1h")
+        if len(df) < 30: return None
+
+        current_price = df['Close'].iloc[-1]
+        
+        recent_high = df['High'].iloc[-20:-1].max()
+        recent_low = df['Low'].iloc[-20:-1].min()
+
+        bos_bullish = current_price > recent_high
+        bos_bearish = current_price < recent_low
+
+        bos_text = "كسر صاعد 🟢 (Bullish BOS)" if bos_bullish else ("كسر هابط 🔴 (Bearish BOS)" if bos_bearish else "تذبذب / إعادة اختبار ⚖️")
+
+        fvg_text = "لا توجد فجوة قريبة"
+        fvg_bullish = False
+        fvg_bearish = False
+
+        for i in range(len(df)-1, len(df)-6, -1):
+            if df['High'].iloc[i-2] < df['Low'].iloc[i]:
+                fvg_bullish = True
+                fvg_text = f"فجوة شرائية 🟢 (Bullish FVG)"
+                break
+            elif df['Low'].iloc[i-2] > df['High'].iloc[i]:
+                fvg_bearish = True
+                fvg_text = f"فجوة بيعية 🔴 (Bearish FVG)"
+                break
+
+        ob_text = "منطقة تجميع حركية"
+        for i in range(len(df)-2, len(df)-15, -1):
+            if df['Close'].iloc[i] < df['Open'].iloc[i] and df['Close'].iloc[i+1] > df['Open'].iloc[i+1]:
+                ob_text = "منطقة طلب صانع السوق 📥 (Demand OB)"
+                break
+            elif df['Close'].iloc[i] > df['Open'].iloc[i] and df['Close'].iloc[i+1] < df['Open'].iloc[i+1]:
+                ob_text = "منطقة عرض صانع السوق 📤 (Supply OB)"
+                break
+
+        if bos_bullish or fvg_bullish:
+            signal = "شراء 🟢 (BUY)"
+            sl = current_price * 0.996
+            tp = current_price + ((current_price - sl) * 2.0)
+        elif bos_bearish or fvg_bearish:
+            signal = "بيع 🔴 (SELL)"
+            sl = current_price * 1.004
+            tp = current_price - ((sl - current_price) * 2.0)
+        else:
+            signal = "انتظار تأكيد السيولة ⏳ (NEUTRAL)"
+            sl = current_price * 0.997
+            tp = current_price + ((current_price - sl) * 1.5)
+
+        lot_table = generate_prop_firm_lot_table(current_price, sl, ticker_symbol)
+
+        return {
+            'price': current_price,
+            'signal': signal,
+            'bos': bos_text,
+            'fvg': fvg_text,
+            'ob': ob_text,
+            'sl': sl,
+            'tp': tp,
+            'lot_table': lot_table
+        }
     except Exception:
         return None
 
-# --- لوحات الأزرار (Keyboards) ---
+# --- اللوحات والأزرار ---
 def main_menu_keyboard():
-    keyboard = [
-        [KeyboardButton("📊 طلب إشارة تداول")],
+    return ReplyKeyboardMarkup([
+        [KeyboardButton("📊 طلب إشارة تداول"), KeyboardButton("🏆 قواعد شركات التمويل")],
         [KeyboardButton("ℹ️ حول البوت"), KeyboardButton("⚠️ إدارة المخاطر")]
-    ]
-    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+    ], resize_keyboard=True)
 
 def categories_keyboard():
-    keyboard = [
+    return ReplyKeyboardMarkup([
         [KeyboardButton("💱 أسواق الفوركس"), KeyboardButton("🪙 العملات الرقمية")],
         [KeyboardButton("🥇 المعادن والسلع")],
         [KeyboardButton("🔙 القائمة الرئيسية")]
-    ]
-    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+    ], resize_keyboard=True)
 
 def pairs_keyboard(pairs_dict):
     keys = list(pairs_dict.keys())
@@ -121,21 +252,20 @@ def pairs_keyboard(pairs_dict):
     keyboard.append([KeyboardButton("🔙 العودة للتصنيفات")])
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
-# --- معالجة الأوامر والرسائل ---
+# --- معالجة الرسائل والأوامر ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    welcome_text = (
-        "🦅 **مرحباً بك في Fenix Fx Pro** 🦅\n\n"
-        "النظام المطور لتحليل الأسواق المالية بناءً على **Smart Money Concepts (SMC)** والسيولة.\n\n"
-        "👇 **استخدم الأزرار بالأسفل للتنقل والحصول على الإشارات:**"
+    welcome = (
+        "🦅 **مرحباً بك في Fenix Fx Pro - Prop Firm Edition** 🦅\n\n"
+        "النظام المطور لتوليد الإشارات واجتياز **تحديات شركات التمويل** مع حساب اللوت المباشر بدون أخطاء.\n\n"
+        "👇 استخدم الأزرار بالأسفل للتنقل:"
     )
-    await update.message.reply_text(welcome_text, reply_markup=main_menu_keyboard(), parse_mode='Markdown')
+    await update.message.reply_text(welcome, reply_markup=main_menu_keyboard(), parse_mode='Markdown')
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
 
-    # 1️⃣ القوائم الرئيسية والتصنيفات
     if text in ["📊 طلب إشارة تداول", "🔙 العودة للتصنيفات"]:
-        await update.message.reply_text("📂 **اختر تصنيف السوق المطلوب:**", reply_markup=categories_keyboard(), parse_mode='Markdown')
+        await update.message.reply_text("📂 **اختر قسم السوق المطلوب:**", reply_markup=categories_keyboard(), parse_mode='Markdown')
 
     elif text == "🔙 القائمة الرئيسية":
         await update.message.reply_text("🏠 **القائمة الرئيسية:**", reply_markup=main_menu_keyboard(), parse_mode='Markdown')
@@ -149,48 +279,61 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif text == "🥇 المعادن والسلع":
         await update.message.reply_text("🥇 **اختر الرمز المطلوب:**", reply_markup=pairs_keyboard(COMMODITIES_PAIRS), parse_mode='Markdown')
 
+    elif text == "🏆 قواعد شركات التمويل":
+        rules = (
+            "🏆 **استراتيجية اجتياز تحديات شركات التمويل (FTMO / FundedNext):**\n\n"
+            "1️⃣ **المخاطرة لكل صفقة:** محددة بنسبة **0.5%** فقط لا غير.\n"
+            "2️⃣ **حساب اللوت:** يتم حسابه أوتوماتيكياً حسب كل زوج وضبط المواصفات بدقة متناهية.\n"
+            "3️⃣ **معدل Risk:Reward:** صفقات SMC محددة بنسبة **1:2** أو أثر للحصول على أقصى عائد."
+        )
+        await update.message.reply_text(rules, parse_mode='Markdown')
+
     elif text == "ℹ️ حول البوت":
-        await update.message.reply_text("🤖 **Fenix Fx Pro**: نظام ذكي يحلل أسواق الفوركس، الكريبتو، والسلع بناءً على المؤشرات الفنية وفلتر الأخبار.", parse_mode='Markdown')
+        await update.message.reply_text("🤖 **Fenix Fx Pro**: بوت تداول ذكي يربط تحليل SMC بحاسبة لوت ديناميكية دقيقة جداً لكل أداة مالية.", parse_mode='Markdown')
 
     elif text == "⚠️ إدارة المخاطر":
-        await update.message.reply_text("📌 **قواعد التداول:**\n1. لا تخاطر بأكثر من 1-2% لكل صفقة.\n2. التزم دائماً بوقف الخسارة (SL).", parse_mode='Markdown')
+        await update.message.reply_text("📌 **قواعد إدارة المخاطر:**\nاختر دائماً حجم اللوت المناسب لرأس مالك المقابل لرسالة الإشارة بالضبط.", parse_mode='Markdown')
 
-    # 2️⃣ معالجة اختيار أي زوج أو رمز
     elif text in ALL_PAIRS_MAP:
         ticker = ALL_PAIRS_MAP[text]
-        await update.message.reply_text(f"🔍 جاري فحص البيانات لـ {text}...")
+        await update.message.reply_text(f"🧠 جاري تحليل SMC وحساب اللوت الدقيق لـ {text}...")
 
-        # فحص الأخبار للفوركس
         has_news, news_info = check_high_impact_news(ticker)
         if has_news:
             warning_msg = (
                 f"🛑 **تنبيه: التداول متوقف حالياً!**\n"
                 f"───────────────────\n"
-                f"⚠️ يوجد خبر عالي التأثير على `{text}`:\n"
+                f"⚠️ خبر عالي التأثير قادم/حالي على `{text}`:\n"
                 f"📌 **الخبر:** {news_info}\n\n"
-                f"💡 *تم إيقاف التحليل حمايةً لرأس المال.*"
+                f"💡 *تم إيقاف الإشارة حمايةً لحساب التمويل من الانزلاقات السعرية.*"
             )
             await update.message.reply_text(warning_msg, parse_mode='Markdown')
             return
 
-        # جلب التحليل المباشر
-        data = get_real_market_data(ticker)
-        if data:
-            trend = "صعود 🟢" if data['price'] > data['ema'] else "هبوط 🔴"
+        smc = analyze_smc_market(ticker, text)
+        if smc:
             reply = (
-                f"📈 **تحليل {text} المباشر**\n"
+                f"🦅 **إشارة تداول SMC - {text}**\n"
                 f"───────────────────\n"
-                f"💵 **السعر الحالي:** `{data['price']:.4f}`\n"
-                f"📊 **مؤشر RSI:** `{data['rsi']:.2f}`\n"
-                f"💡 ** الاتجاه (EMA20):** {trend}\n"
+                f"💵 **السعر الحالي:** `{smc['price']:.5f}`\n"
+                f"🎯 **الإشارة:** `{smc['signal']}`\n\n"
+                f"📌 **مستويات التنفيذ:**\n"
+                f"🎯 **الهدف (TP):** `{smc['tp']:.5f}`\n"
+                f"🛡️ **وقف الخسارة (SL):** `{smc['sl']:.5f}`\n"
+                f"⚖️ **معدل المخاطرة/العائد (R:R):** `1 : 2`\n\n"
+                f"🧠 **تحليل SMC:**\n"
+                f"▫️ **هيكل السوق:** {smc['bos']}\n"
+                f"▫️ **الفجوة:** {smc['fvg']}\n"
+                f"▫️ **كتلة الأوامر:** {smc['ob']}\n\n"
+                f"{smc['lot_table']}\n"
                 f"───────────────────\n"
-                f"⚡ *بيانات حقيقية لحظية*"
+                f"🛡️ **فلتر الأخبار:** لا توجد أخبار مؤثثة حالياً ✅"
             )
             await update.message.reply_text(reply, parse_mode='Markdown')
         else:
-            await update.message.reply_text("❌ عذراً، لم أتمكن من جلب بيانات هذا الزوج حالياً.")
+            await update.message.reply_text("❌ عذراً، تعذر جلب التحليل حالياً، حاول مرة أخرى.")
     else:
-        await update.message.reply_text("الرجاء استخدام الأزرار المتاحة في الأسفل.")
+        await update.message.reply_text("استخدم الأزرار في الأسفل للتنقل.")
 
 def main():
     app = (
