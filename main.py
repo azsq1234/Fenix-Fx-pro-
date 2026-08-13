@@ -8,10 +8,10 @@ import numpy as np
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
-# 🔑 التوكين الجديد الخاص بك
-TELEGRAM_BOT_TOKEN = "8902321690:AAGscp65vSOSMRxTpAYAK5IPHZx5ThHAW48"
+# 🔑 التوكين الجديد المربوط
+TELEGRAM_BOT_TOKEN = "8482434263:AAG1N_R8AEZCKmLWDlyEA2HE8VYT1wMewgY"
 
-# --- سيرفر فحص الصحة لضمان العمل على Render ---
+# --- سيرفر فحص الصحة لضمان الاستمرارية على Render ---
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
