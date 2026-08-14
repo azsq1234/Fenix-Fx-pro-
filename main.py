@@ -22,9 +22,6 @@ STATS_FILE = "stats.json"
 active_trades = []
 sent_signals_cache = set()
 
-# ذاكرة تخزين مؤقتة سريعة جداً لمنع أي تأخير في جلب البيانات
-price_memory_cache = {}
-
 def load_stats():
     if not os.path.exists(STATS_FILE):
         return {"trades": [], "daily_summary": {}}
@@ -72,7 +69,7 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"Fenix Fx Pro Ultra-Fast 0.1s Engine Active!")
+        self.wfile.write(b"Fenix Fx Pro Server Active!")
     def log_message(self, format, *args): return
 
 def start_health_server():
@@ -105,7 +102,6 @@ def generate_prop_firm_lot_table(entry_price, sl_price, ticker_symbol):
     table_text += "```\n"
     return table_text
 
-# محرك اتخاذ القرار الفائق السرعة باستخدام المصفوفات (Vectorized Speed Engine)
 def ultra_fast_institutional_analysis(ticker_symbol, symbol_name):
     try:
         ticker = yf.Ticker(ticker_symbol, session=session)
@@ -120,7 +116,6 @@ def ultra_fast_institutional_analysis(ticker_symbol, symbol_name):
         current_price = float(closes[-1])
         ma_50 = np.mean(closes[-50:])
         
-        # خوارزمية الخبراء السريعة جداً
         trend = "BULLISH" if current_price > ma_50 else "BEARISH"
         recent_high = float(np.max(highs[-10:-1]))
         recent_low = float(np.min(lows[-10:-1]))
@@ -154,14 +149,12 @@ def ultra_fast_institutional_analysis(ticker_symbol, symbol_name):
     except Exception:
         return None
 
-# حلقة المعالجة المتوازية الخاطفة 0.1 ثانية
 async def lightning_fast_bot_loop():
     bot = Bot(token=TELEGRAM_BOT_TOKEN)
     await asyncio.sleep(2)
     
     while True:
         try:
-            # استخدام مهام متوازية (Gather) لفحص جميع الأصول في نفس الميكروثانية دون أي انتظار تراكمي
             tasks = [asyncio.to_thread(ultra_fast_institutional_analysis, ticker, name) for name, ticker in MONITORED_PAIRS.items()]
             results = await asyncio.gather(*tasks)
 
@@ -176,7 +169,7 @@ async def lightning_fast_bot_loop():
                 sent_signals_cache.add(symbol_name)
                 
                 reply = (
-                    f"⚡ **إشارة فائقة السرعة (0.1s) - {symbol_name}**\n"
+                    f"⚡ **إشارة آلية فائقة السرعة - {symbol_name}**\n"
                     f"───────────────────\n"
                     f"🎯 **سعر الدخول:** `{analysis['price']:.5f}`\n"
                     f"🎯 **الإشارة:** `{analysis['signal']}`\n\n"
@@ -186,7 +179,7 @@ async def lightning_fast_bot_loop():
                     f"📊 **نسبة الثقة:** `{analysis['score']}%`\n\n"
                     f"{analysis['lot_table']}\n"
                     f"───────────────────\n"
-                    f"🤖 **التنفيذ فوري ويتم التتمة حتى الهدف.**"
+                    f"🤖 **التنفيذ فوري ويتم التتبع تلقائياً حتى الهدف.**"
                 )
                 
                 await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=reply, parse_mode='Markdown')
@@ -202,7 +195,6 @@ async def lightning_fast_bot_loop():
                     'sl': analysis['sl']
                 })
 
-            # تتبع الصفقات النشطة بلحظتها
             if active_trades:
                 for trade in active_trades[:]:
                     try:
@@ -246,13 +238,17 @@ async def lightning_fast_bot_loop():
                         if trade['symbol'] in sent_signals_cache:
                             sent_signals_cache.remove(trade['symbol'])
 
-            # تقليل وقت الانتظار إلى أقصى حد ممكن لتنفيذ المهام بشكل متواصل وخاطف
-            await asyncio.sleep(0.1)
-        except Exception:
             await asyncio.sleep(0.5)
+        except Exception:
+            await asyncio.sleep(1)
 
 def main():
-    loop = asyncio.get_event_loop()
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+    
     loop.run_until_complete(lightning_fast_bot_loop())
 
 if __name__ == "__main__":
