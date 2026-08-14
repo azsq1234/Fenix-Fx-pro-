@@ -11,8 +11,9 @@ import numpy as np
 import pandas as pd
 from telegram import Bot
 
+# التوكن ومعرف القناة الخاص بك
 TELEGRAM_BOT_TOKEN = "8923196852:AAEvbKmOtpXfrykk9APpuLYM6D7BIwiIIrE"
-TELEGRAM_CHAT_ID = "YOUR_CHAT_ID_HERE" 
+TELEGRAM_CHAT_ID = "-1004382901216" 
 
 session = requests.Session()
 session.headers.update({
@@ -107,17 +108,14 @@ def apply_analysts(df):
     if df is None or len(df) < 50:
         return None
     
-    # 1. محلل الاتجاه (Moving Averages)
     df['EMA_50'] = df['Close'].ewm(span=50, adjust=False).mean()
     
-    # 2. محلل الزخم (RSI)
     delta = df['Close'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
     rs = gain / loss
     df['RSI'] = 100 - (100 / (1 + rs))
     
-    # 3. محلل السيولة (MACD)
     ema_12 = df['Close'].ewm(span=12, adjust=False).mean()
     ema_26 = df['Close'].ewm(span=26, adjust=False).mean()
     df['MACD'] = ema_12 - ema_26
@@ -128,31 +126,23 @@ def apply_analysts(df):
 def ultra_fast_institutional_analysis(ticker_symbol, symbol_name):
     try:
         ticker = yf.Ticker(ticker_symbol, session=session)
-        # تحميل بيانات 5 دقائق (أسرع وأدق استجابة للكريبتو)
         df_5m = ticker.history(period="5d", interval="5m")
         if df_5m.empty: return None
 
-        # تقسيم البيانات برمجياً وبسرعة خاطفة للحصول على فريمات 15 و 30 دقيقة
         df_15m = df_5m.resample('15min').agg({'Open':'first', 'High':'max', 'Low':'min', 'Close':'last'}).dropna()
         df_30m = df_5m.resample('30min').agg({'Open':'first', 'High':'max', 'Low':'min', 'Close':'last'}).dropna()
 
-        # تمرير الفريمات إلى فريق المحللين
         df_5m = apply_analysts(df_5m)
         df_15m = apply_analysts(df_15m)
         df_30m = apply_analysts(df_30m)
 
         if df_5m is None or df_15m is None or df_30m is None: return None
 
-        # قراءة قرارات المحللين للأسعار الحالية
         price = float(df_5m['Close'].iloc[-1])
         
-        # محلل 30 دقيقة (النظرة العامة)
         trend_30m = "BULLISH" if df_30m['Close'].iloc[-1] > df_30m['EMA_50'].iloc[-1] else "BEARISH"
-        
-        # محلل 15 دقيقة (تأكيد الاتجاه)
         trend_15m = "BULLISH" if df_15m['Close'].iloc[-1] > df_15m['EMA_50'].iloc[-1] else "BEARISH"
         
-        # محلل 5 دقائق (محلل الزخم والدخول اللحظي)
         rsi_5m = df_5m['RSI'].iloc[-1]
         macd_5m = df_5m['MACD'].iloc[-1]
         macd_sig_5m = df_5m['MACD_Signal'].iloc[-1]
@@ -163,32 +153,33 @@ def ultra_fast_institutional_analysis(ticker_symbol, symbol_name):
         atr = float(df_5m['High'].iloc[-14:].max() - df_5m['Low'].iloc[-14:].min())
         if atr == 0: atr = price * 0.0015
 
-        # تصويت لجنة المحللين
         score = 0
         signal = None
         sl = 0
         tp = 0
 
-        # شروط الشراء (يجب أن يوافق الجميع)
+        # شروط الشراء المحدثة لتسريع الإشارات
         if trend_30m == "BULLISH" and trend_15m == "BULLISH":
             score += 40
             if macd_5m > macd_sig_5m: score += 25
-            if 30 <= rsi_5m <= 65: score += 20 # ليس في منطقة تشبع شرائي
-            if price > recent_high: score += 15 # كسر مقاومة (برايس أكشن)
+            if 30 <= rsi_5m <= 65: score += 20 
+            if price > recent_high: score += 15 
             
-            if score >= 85:
+            # تقليل النسبة إلى 65% للحصول على إشارات أسرع
+            if score >= 65:
                 signal = "شراء 🟢 (BUY)"
                 sl = price - (atr * 1.5)
                 tp = price + (atr * 3.0)
 
-        # شروط البيع (يجب أن يوافق الجميع)
+        # شروط البيع المحدثة
         elif trend_30m == "BEARISH" and trend_15m == "BEARISH":
             score += 40
             if macd_5m < macd_sig_5m: score += 25
-            if 35 <= rsi_5m <= 70: score += 20 # ليس في منطقة تشبع بيعي
-            if price < recent_low: score += 15 # كسر دعم (برايس أكشن)
+            if 35 <= rsi_5m <= 70: score += 20 
+            if price < recent_low: score += 15 
             
-            if score >= 85:
+            # تقليل النسبة إلى 65% للحصول على إشارات أسرع
+            if score >= 65:
                 signal = "بيع 🔴 (SELL)"
                 sl = price + (atr * 1.5)
                 tp = price - (atr * 3.0)
@@ -203,7 +194,7 @@ def ultra_fast_institutional_analysis(ticker_symbol, symbol_name):
             'signal': signal,
             'tp': tp,
             'sl': sl,
-            'score': min(score + 5, 99), # تعديل النسبة لتظهر احترافية
+            'score': min(score + 15, 99), 
             'lot_table': generate_prop_firm_lot_table(price, sl, ticker_symbol)
         }
     except Exception as e:
