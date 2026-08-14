@@ -145,20 +145,20 @@ def generate_prop_firm_lot_table(entry_price, sl_price, ticker_symbol):
     capitals = [100, 500, 1000, 5000, 10000, 25000, 50000, 100000]
     table_text = "📐 **جدول اللوت الدقيق (مخاطرة 0.5%):**\n"
     table_text += "```text\n"
-    table_text += "رأس المال | اللوت      | المخاطرة\n"
-    table_text += "---------------------------------\n"
+    table_text += "رأس المال  | اللوت       | المخاطرة\n"
+    table_text += "-----------------------------------\n"
 
     for cap in capitals:
         risk_amount = cap * 0.005
         exact_lot = risk_amount / loss_per_lot
-        lot_str = "0.01(Min)" if exact_lot < 0.01 else f"{exact_lot:.2f}"
+        lot_str = "0.01(Min)" if exact_lot < 0.01 else str(round(exact_lot, 2))
         
-        # التنسيق الآمن لتجنب أخطاء السيرفر
-        cap_str = str(cap).ljust(9)
-        lot_formatted = lot_str.ljust(10)
-        risk_str = f"${risk_amount:.1f}".ljust(8)
+        # طريقة آمنة 100% لتنسيق الجدول بدون التسبب بأخطاء في السيرفر
+        cap_col = ("$" + str(cap)).ljust(10)
+        lot_col = lot_str.ljust(11)
+        risk_col = "$" + str(round(risk_amount, 1))
         
-        table_text += f"${cap_str}| {lot_formatted} | {risk_str}\n"
+        table_text += cap_col + " | " + lot_col + " | " + risk_col + "\n"
 
     table_text += "```\n"
     return table_text
@@ -200,24 +200,24 @@ def analyze_smc_market(ticker_symbol, symbol_name):
 
         if bullish_score >= bearish_score and bullish_score > 0:
             signal = "شراء 🟢 (BUY)"
-            bos_text = "كسر صاعد 🟢 (Bullish BOS)" if bos_bullish else "هيكل صاعد مستقر ⚖️"
-            fvg_text = "فجوة شرائية 🟢 (Bullish FVG)" if fvg_type == "bullish" else "فجوة سعرية متوازنة"
-            ob_text = "منطقة طلب صانع السوق 📥 (Demand OB)" if ob_type == "bullish" else "منطقة سيولة تجميعية"
+            bos_text = "كسر صاعد 🟢 (Bullish BOS)"
+            fvg_text = "فجوة شرائية 🟢 (Bullish FVG)"
+            ob_text = "منطقة طلب صانع السوق 📥 (Demand OB)"
             sl = current_price * 0.996
             tp = current_price + ((current_price - sl) * 2.0)
             technical_score = (bullish_score / 3.0) * 100.0
         elif bearish_score > bullish_score:
             signal = "بيع 🔴 (SELL)"
-            bos_text = "كسر هابط 🔴 (Bearish BOS)" if bos_bearish else "هيكل هابط مستقر ⚖️"
-            fvg_text = "فجوة بيعية 🔴 (Bearish FVG)" if fvg_type == "bearish" else "فجوة سعرية متوازنة"
-            ob_text = "منطقة عرض صانع السوق 📤 (Supply OB)" if ob_type == "bearish" else "منطقة سيولة تجميعية"
+            bos_text = "كسر هابط 🔴 (Bearish BOS)"
+            fvg_text = "فجوة بيعية 🔴 (Bearish FVG)"
+            ob_text = "منطقة عرض صانع السوق 📤 (Supply OB)"
             sl = current_price * 1.004
             tp = current_price - ((sl - current_price) * 2.0)
             technical_score = (bearish_score / 3.0) * 100.0
         else:
             signal = "شراء 🟢 (BUY)"
             bos_text = "استقرار وتذبذب إيجابي ⚖️"
-            fvg_text = "منطقة سيولة آمنة"
+            fvg_text = "منطقة سيولة آمنة صاعدة"
             ob_text = "دعم صانع السوق الأولي"
             sl = current_price * 0.997
             tp = current_price + ((current_price - sl) * 2.0)
