@@ -1,5 +1,5 @@
+https://github.com/rongard/tvdatafeed/archive/refs/heads/main.zip
 pandas
 python-telegram-bot
 requests
 matplotlib
-tvdatafeed
