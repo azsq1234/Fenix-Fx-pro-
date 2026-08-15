@@ -1,4 +1,5 @@
-yfinance
+tvDatafeed
+pandas
 python-telegram-bot
 requests
 matplotlib
