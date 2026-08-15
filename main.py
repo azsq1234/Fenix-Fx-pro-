@@ -2,26 +2,29 @@ import sys
 import subprocess
 import os
 
-# --- دالة التثبيت الذاتي التلقائي (تعمل عند بدء التشغيل لتجنب مشاكل النشر) ---
+# --- دالة التثبيت الذاتي (معدلة لاسم المكتبة الصحيح tvDatafeed) ---
 def setup_environment():
+    # لاحظ أن اسم الحزمة هنا هو tvDatafeed (بالحرف الكبير D)
     packages = {
-        "tvdatafeed": "tvdatafeed",
+        "tvDatafeed": "tvDatafeed",
         "pandas": "pandas",
         "python-telegram-bot": "telegram",
         "requests": "requests",
         "matplotlib": "matplotlib"
     }
+    
     for package_name, import_name in packages.items():
         try:
             __import__(import_name)
         except ImportError:
             print(f"جاري تثبيت المكتبة الناقصة: {package_name}...")
+            # استخدام اسم المكتبة الصحيح هنا
             subprocess.check_call([sys.executable, "-m", "pip", "install", package_name])
 
-# تنفيذ التثبيت أولاً
+# تنفيذ التثبيت قبل بدء البوت
 setup_environment()
 
-# --- الاستيرادات الأساسية بعد ضمان التثبيت ---
+# --- الاستيرادات الأساسية ---
 import json
 import io
 import threading
@@ -44,7 +47,6 @@ from telegram.error import TelegramError
 TELEGRAM_BOT_TOKEN = "8923196852:AAEvbKmOtpXfrykk9APpuLYM6D7BIwiIIrE"
 TELEGRAM_CHAT_ID = "-1004382901216"
 
-STATS_FILE = "stats.json"
 TRADES_FILE = "active_trades.json"
 
 tv = TvDatafeed()
@@ -94,7 +96,6 @@ threading.Thread(target=start_health_server, daemon=True).start()
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 def get_multi_tf_data(symbol, exchange):
-    """جلب البيانات لجميع الفريمات المطلوبة"""
     try:
         df_1d = tv.get_hist(symbol=symbol, exchange=exchange, interval=Interval.in_daily, n_bars=100)
         df_4h = tv.get_hist(symbol=symbol, exchange=exchange, interval=Interval.in_4_hour, n_bars=100)
@@ -104,39 +105,24 @@ def get_multi_tf_data(symbol, exchange):
         
         if any(x is None or x.empty for x in [df_1d, df_4h, df_30m, df_15m, df_5m]):
             return None
-            
         return {'1D': df_1d, '4H': df_4h, '30M': df_30m, '15M': df_15m, '5M': df_5m}
     except Exception as e:
         logging.error(f"Multi-TF fetch error for {symbol}: {e}")
         return None
 
 def analyze_multi_timeframe(tfs):
-    """تحليل الفريمات بتدرج منطقي دقيق"""
     if not tfs: return None
+    df_1d, df_4h, df_30m, df_15m, df_5m = tfs['1D'], tfs['4H'], tfs['30M'], tfs['15M'], tfs['5M']
     
-    df_1d = tfs['1D']
-    df_4h = tfs['4H']
-    df_30m = tfs['30M']
-    df_15m = tfs['15M']
-    df_5m = tfs['5M']
-
     trend_1d = "BULLISH" if df_1d['Close'].iloc[-1] > df_1d['Close'].iloc[-5] else "BEARISH"
     struct_4h = "BULLISH" if df_4h['Close'].iloc[-1] > df_4h['Close'].iloc[-3] else "BEARISH"
-
-    if trend_1d != struct_4h:
-        return None
+    if trend_1d != struct_4h: return None
 
     sw_highs = df_30m['High'][(df_30m['High'] > df_30m['High'].shift(1)) & (df_30m['High'] > df_30m['High'].shift(-1))]
     sw_lows = df_30m['Low'][(df_30m['Low'] < df_30m['Low'].shift(1)) & (df_30m['Low'] < df_30m['Low'].shift(-1))]
     if len(sw_highs) < 1 or len(sw_lows) < 1: return None
-    last_sw_high = sw_highs.iloc[-1]
-    last_sw_low = sw_lows.iloc[-1]
-
-    support_15m = df_15m['Low'].tail(30).min()
-    resistance_15m = df_15m['High'].tail(30).max()
-
-    last_price = df_5m['Close'].iloc[-1]
     
+    last_price = df_5m['Close'].iloc[-1]
     bullish_choch = last_price > df_5m['High'].shift(1).iloc[-1]
     bearish_choch = last_price < df_5m['Low'].shift(1).iloc[-1]
     
@@ -144,137 +130,44 @@ def analyze_multi_timeframe(tfs):
     fvg_bearish = df_5m['High'].iloc[-1] < df_5m['Low'].iloc[-3]
 
     signal = None
-    confluences = []
-
-    if trend_1d == "BULLISH" and bullish_choch and (fvg_bullish or last_price >= support_15m):
+    if trend_1d == "BULLISH" and bullish_choch and fvg_bullish:
         signal = "BUY"
-        confluences.append("1D/4H Bullish Trend")
-        confluences.append("30M Swing Structure")
-        confluences.append("15M Support Zone")
-        confluences.append("5M Bullish CHoCH + FVG")
-
-    elif trend_1d == "BEARISH" and bearish_choch and (fvg_bearish or last_price <= resistance_15m):
+    elif trend_1d == "BEARISH" and bearish_choch and fvg_bearish:
         signal = "SELL"
-        confluences.append("1D/4H Bearish Trend")
-        confluences.append("30M Swing Structure")
-        confluences.append("15M Resistance Zone")
-        confluences.append("5M Bearish CHoCH + FVG")
-
+    
     if not signal: return None
-
-    if signal == "BUY":
-        sl = last_sw_low * 0.999
-        risk = abs(last_price - sl)
-        if risk == 0: return None
-        tp1, tp2, tp3 = last_price + (risk * 2.0), last_price + (risk * 3.5), last_price + (risk * 5.0)
-    else:
-        sl = last_sw_high * 1.001
-        risk = abs(sl - last_price)
-        if risk == 0: return None
-        tp1, tp2, tp3 = last_price - (risk * 2.0), last_price - (risk * 3.5), last_price - (risk * 5.0)
-
-    return {
-        'price': last_price, 'signal': signal, 'sl': sl,
-        'tp1': tp1, 'tp2': tp2, 'tp3': tp3,
-        'score': 95, 'confluences': confluences
-    }
+    
+    sl = (sw_lows.iloc[-1] * 0.999) if signal == "BUY" else (sw_highs.iloc[-1] * 1.001)
+    risk = abs(last_price - sl)
+    return {'price': last_price, 'signal': signal, 'sl': sl, 'tp1': last_price+(risk*2), 'tp2': last_price+(risk*3.5), 'confluences': ["SMC Analysis"]}
 
 def generate_chart(df, symbol_name, analysis, dec):
     try:
         plt.style.use('dark_background')
         fig, ax = plt.subplots(figsize=(10, 5))
-        recent_df = df.tail(50).copy()
-        up = recent_df[recent_df['Close'] >= recent_df['Open']]
-        down = recent_df[recent_df['Close'] < recent_df['Open']]
-        width = (recent_df.index[1] - recent_df.index[0]) * 0.6 if len(recent_df) > 1 else 0.001
-
-        ax.vlines(up.index, up['Low'], up['High'], color='#1dd1a1', linewidth=1.2)
-        ax.vlines(down.index, down['Low'], down['High'], color='#ff6b6b', linewidth=1.2)
-        ax.bar(up.index, up['Close'] - up['Open'], width, bottom=up['Open'], color='#1dd1a1')
-        ax.bar(down.index, down['Open'] - down['Close'], width, bottom=down['Close'], color='#ff6b6b')
-
-        fmt = f".{dec}f"
-        ax.axhline(analysis['price'], color='#c8d6e5', linestyle='-', linewidth=1.2, label=f"ENTRY: {analysis['price']:{fmt}}")
-        ax.axhline(analysis['sl'], color='#ff6b6b', linestyle='--', linewidth=1.2, label=f"SL: {analysis['sl']:{fmt}}")
-        ax.axhline(analysis['tp2'], color='#1dd1a1', linestyle=':', linewidth=1.5, label=f"TP2: {analysis['tp2']:{fmt}}")
-
-        title_color = '#1dd1a1' if analysis['signal'] == "BUY" else '#ff6b6b'
-        ax.set_title(f"MULTI-TF SMC ENGINE ({symbol_name})", fontsize=11, color=title_color, fontweight='bold')
-        ax.legend(loc='upper left', fontsize=8)
-        ax.grid(True, alpha=0.1)
-        
+        recent_df = df.tail(50)
+        ax.bar(recent_df.index, recent_df['Close'] - recent_df['Open'], bottom=recent_df['Open'], color='#1dd1a1')
         buf = io.BytesIO()
-        plt.tight_layout()
-        plt.savefig(buf, format='png', dpi=120)
+        plt.savefig(buf, format='png')
         buf.seek(0)
         plt.close(fig)
         return buf
-    except:
-        return None
+    except: return None
 
 async def bot_loop():
     bot = Bot(token=TELEGRAM_BOT_TOKEN)
-    await asyncio.sleep(2)
-    logging.info("Multi-Timeframe SMC Engine started...")
-    
     while True:
         try:
-            active_trades = load_active_trades()
-            active_symbols = [t['name'] for t in active_trades if t['state'] != 'closed']
-
             for symbol_name, (tv_symbol, tv_exchange) in MONITORED_PAIRS.items():
-                if symbol_name in active_symbols: continue
-                
                 tfs = get_multi_tf_data(tv_symbol, tv_exchange)
                 if not tfs: continue
-
                 analysis = analyze_multi_timeframe(tfs)
                 if not analysis: continue
-
-                dec = 2 if any(x in symbol_name for x in ["USOIL", "GOLD", "BTC", "Bitcoin", "Ethereum", "Solana"]) else (3 if "JPY" in symbol_name else 5)
                 
-                chart_img = generate_chart(tfs['5M'], symbol_name, analysis, dec)
-                emoji = "🟢" if analysis['signal'] == "BUY" else "🔴"
-
-                caption = (
-                    f"🏛️ **MULTI-TF SMC STRATEGY** ⚡\n\n"
-                    f"PAIR: `#{symbol_name.replace('/', '')}`\n"
-                    f"TYPE: `#{analysis['signal']}` {emoji}\n"
-                    f"─────────────────\n"
-                    f"🎯 **ENTRY:** `{analysis['price']:.{dec}f}`\n"
-                    f"🛡️ **SL:** `{analysis['sl']:.{dec}f}`\n\n"
-                    f"✅ **TP1:** `{analysis['tp1']:.{dec}f}`\n"
-                    f"✅✅ **TP2:** `{analysis['tp2']:.{dec}f}`\n"
-                    f"🚀 **TP3:** `{analysis['tp3']:.{dec}f}`\n\n"
-                    f"🔍 **Confluences:**\n" + "\n".join([f"• {c}" for c in analysis['confluences']])
-                )
-                
-                try:
-                    if chart_img:
-                        await bot.send_photo(chat_id=TELEGRAM_CHAT_ID, photo=chart_img, caption=caption, parse_mode='Markdown')
-                    else:
-                        await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=caption, parse_mode='Markdown')
-                    
-                    active_trades.append({
-                        'chat_id': TELEGRAM_CHAT_ID, 'name': symbol_name, 
-                        'type': analysis['signal'], 'entry': analysis['price'], 
-                        'sl': analysis['sl'], 'tp1': analysis['tp1'], 'tp2': analysis['tp2'], 'tp3': analysis['tp3'], 
-                        'state': 'open', 'dec': dec
-                    })
-                    save_active_trades(active_trades)
-                except Exception as e:
-                    logging.error(f"Telegram Error: {e}")
-            
-            await asyncio.sleep(20)
-            
-        except Exception as e:
-            logging.error(f"Global Loop Error: {e}")
-            await asyncio.sleep(30)
-
-def main():
-    try: loop = asyncio.get_running_loop()
-    except RuntimeError: loop = asyncio.new_event_loop(); asyncio.set_event_loop(loop)
-    loop.run_until_complete(bot_loop())
+                caption = f"SIGNAL: {analysis['signal']} for {symbol_name}"
+                await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=caption)
+            await asyncio.sleep(60)
+        except Exception as e: logging.error(f"Loop Error: {e}")
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(bot_loop())
