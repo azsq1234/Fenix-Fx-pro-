@@ -1,5 +1,5 @@
-tvDatafeed-fork
 pandas
 python-telegram-bot
 requests
 matplotlib
+git+https://github.com/deathlyface/tvDatafeed.git
