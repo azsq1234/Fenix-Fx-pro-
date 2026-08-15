@@ -1,4 +1,4 @@
-tvDatafeed
+tvDatafeed-fork
 pandas
 python-telegram-bot
 requests
