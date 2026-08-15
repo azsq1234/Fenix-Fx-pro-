@@ -89,11 +89,9 @@ def analyze_multi_timeframe(tfs):
     
     df_1d, df_4h, df_30m, df_15m, df_5m = tfs['1D'], tfs['4H'], tfs['30M'], tfs['15M'], tfs['5M']
     
-    # 1. الاتجاه العام على الفريم اليومي باستخدام المتوسط المتحرك
     ema_1d = df_1d['close'].ewm(span=20, adjust=False).mean().iloc[-1]
     trend_1d = "BULLISH" if df_1d['close'].iloc[-1] > ema_1d else "BEARISH"
 
-    # 2. تحديد الهيكل والقمم/القيعان على 30M
     df_30m['swing_high'] = df_30m['high'][(df_30m['high'] > df_30m['high'].shift(1)) & (df_30m['high'] > df_30m['high'].shift(-1))]
     df_30m['swing_low'] = df_30m['low'][(df_30m['low'] < df_30m['low'].shift(1)) & (df_30m['low'] < df_30m['low'].shift(-1))]
     
@@ -105,18 +103,15 @@ def analyze_multi_timeframe(tfs):
     dealing_range_high = recent_highs.iloc[-1]
     dealing_range_low = recent_lows.iloc[-1]
     
-    # 3. حساب مناطق الـ Premium & Discount (مستوى 50% Equilibrium)
     eq_level = (dealing_range_high + dealing_range_low) / 2
     last_price = df_5m['close'].iloc[-1]
     
     in_discount = last_price < eq_level
     in_premium = last_price > eq_level
 
-    # 4. فحص سحب السيولة (Liquidity Sweep) على فريم 15M
     sweep_low = (df_15m['low'].iloc[-2] < dealing_range_low) and (df_15m['close'].iloc[-2] > dealing_range_low)
     sweep_high = (df_15m['high'].iloc[-2] > dealing_range_high) and (df_15m['close'].iloc[-2] < dealing_range_high)
 
-    # 5. البحث عن Order Blocks (OB) و FVG وتغير السلوك (CHoCH) على 5M
     bullish_ob_valid = False
     bullish_choch = False
     ob_low = 0
@@ -149,7 +144,6 @@ def analyze_multi_timeframe(tfs):
 
     signal, confluences = None, []
 
-    # شروط صفقات الشراء (BUY)
     if trend_1d == "BULLISH" and in_discount and bullish_ob_valid and bullish_choch:
         signal = "BUY"
         confluences.append("🟢 HTF Trend: Bullish")
@@ -163,7 +157,6 @@ def analyze_multi_timeframe(tfs):
         if risk == 0: return None
         tp1, tp2, tp3 = last_price + (risk * 2.0), last_price + (risk * 3.5), last_price + (risk * 5.0)
 
-    # شروط صفقات البيع (SELL)
     elif trend_1d == "BEARISH" and in_premium and bearish_ob_valid and bearish_choch:
         signal = "SELL"
         confluences.append("🔴 HTF Trend: Bearish")
@@ -253,12 +246,10 @@ async def bot_loop():
     
     while True:
         try:
-            # 1. متابعة الصفقات المفتوحة
             await monitor_active_trades(bot)
 
-            # 2. فحص صفقات جديدة
             active_trades = load_active_trades()
-            active_symbols = [t['name'] for t in active_trades if t.get('state'] != 'closed']
+            active_symbols = [t['name'] for t in active_trades if t.get('state') != 'closed']
 
             for symbol_name, (tv_symbol, tv_exchange) in MONITORED_PAIRS.items():
                 if symbol_name in active_symbols: continue
