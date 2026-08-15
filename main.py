@@ -1,14 +1,11 @@
 import os
-import io
 import json
 import logging
 import asyncio
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import pandas as pd
-import matplotlib
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
+import numpy as np
 from tvDatafeed import TvDatafeed, Interval
 from telegram import Bot
 
@@ -17,10 +14,14 @@ TELEGRAM_BOT_TOKEN = "8923196852:AAEvbKmOtpXfrykk9APpuLYM6D7BIwiIIrE"
 TELEGRAM_CHAT_ID = "-1004382901216"
 TRADES_FILE = "active_trades.json"
 
+# --- روابط صور الـ GIF ---
+BUY_GIF_URL = "https://media.giphy.com/media/Q8I5u6AL18H28/giphy.gif"
+SELL_GIF_URL = "https://media.giphy.com/media/W3gH7rhoXasdO/giphy.gif"
+
 tv = TvDatafeed()
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# --- الأزواج المراد مراقبتها ---
+# --- الأزواج المراد مراقبتها (15 زوجاً) ---
 MONITORED_PAIRS = {
     "EUR/USD": ("EURUSD", "OANDA"),
     "GBP/USD": ("GBPUSD", "OANDA"),
@@ -51,12 +52,12 @@ def save_active_trades(trades):
         with open(TRADES_FILE, "w") as f: json.dump(trades, f, indent=2)
     except Exception as e: logging.error(f"Error saving trades: {e}")
 
-# --- سيرفر الفحص لإبقاء الخدمة نشطة على Render ---
+# --- سيرفر الحماية لـ Render ---
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"Multi-Timeframe SMC Engine is LIVE!")
+        self.wfile.write(b"Fenix FX Pro - Pro SMC Engine is LIVE!")
     def log_message(self, format, *args): pass
 
 def start_health_server():
@@ -65,7 +66,7 @@ def start_health_server():
 
 threading.Thread(target=start_health_server, daemon=True).start()
 
-# --- جلب البيانات المتعددة للفريمات ---
+# --- جلب بيانات الأطر الزمنية المتعددة ---
 def get_multi_tf_data(symbol, exchange):
     try:
         df_1d = tv.get_hist(symbol=symbol, exchange=exchange, interval=Interval.in_daily, n_bars=100)
@@ -79,122 +80,185 @@ def get_multi_tf_data(symbol, exchange):
             
         return {'1D': df_1d, '4H': df_4h, '30M': df_30m, '15M': df_15m, '5M': df_5m}
     except Exception as e:
-        logging.error(f"Multi-TF fetch error for {symbol}: {e}")
+        logging.error(f"Fetch error for {symbol}: {e}")
         return None
 
-# --- تحليل الفريمات والاستراتيجية ---
+# --- استراتيجية Smart Money Concepts المؤسساتية المتكاملة ---
 def analyze_multi_timeframe(tfs):
     if not tfs: return None
     
-    df_1d = tfs['1D']
-    df_4h = tfs['4H']
-    df_30m = tfs['30M']
-    df_15m = tfs['15M']
-    df_5m = tfs['5M']
+    df_1d, df_4h, df_30m, df_15m, df_5m = tfs['1D'], tfs['4H'], tfs['30M'], tfs['15M'], tfs['5M']
+    
+    # 1. الاتجاه العام على الفريم اليومي باستخدام المتوسط المتحرك
+    ema_1d = df_1d['close'].ewm(span=20, adjust=False).mean().iloc[-1]
+    trend_1d = "BULLISH" if df_1d['close'].iloc[-1] > ema_1d else "BEARISH"
 
-    trend_1d = "BULLISH" if df_1d['close'].iloc[-1] > df_1d['close'].iloc[-5] else "BEARISH"
-    struct_4h = "BULLISH" if df_4h['close'].iloc[-1] > df_4h['close'].iloc[-3] else "BEARISH"
-
-    if trend_1d != struct_4h:
-        return None
-
-    sw_highs = df_30m['high'][(df_30m['high'] > df_30m['high'].shift(1)) & (df_30m['high'] > df_30m['high'].shift(-1))]
-    sw_lows = df_30m['low'][(df_30m['low'] < df_30m['low'].shift(1)) & (df_30m['low'] < df_30m['low'].shift(-1))]
-    if len(sw_highs) < 1 or len(sw_lows) < 1: return None
-    last_sw_high = sw_highs.iloc[-1]
-    last_sw_low = sw_lows.iloc[-1]
-
-    support_15m = df_15m['low'].tail(30).min()
-    resistance_15m = df_15m['high'].tail(30).max()
-
+    # 2. تحديد الهيكل والقمم/القيعان على 30M
+    df_30m['swing_high'] = df_30m['high'][(df_30m['high'] > df_30m['high'].shift(1)) & (df_30m['high'] > df_30m['high'].shift(-1))]
+    df_30m['swing_low'] = df_30m['low'][(df_30m['low'] < df_30m['low'].shift(1)) & (df_30m['low'] < df_30m['low'].shift(-1))]
+    
+    recent_highs = df_30m['swing_high'].dropna()
+    recent_lows = df_30m['swing_low'].dropna()
+    
+    if len(recent_highs) < 2 or len(recent_lows) < 2: return None
+    
+    dealing_range_high = recent_highs.iloc[-1]
+    dealing_range_low = recent_lows.iloc[-1]
+    
+    # 3. حساب مناطق الـ Premium & Discount (مستوى 50% Equilibrium)
+    eq_level = (dealing_range_high + dealing_range_low) / 2
     last_price = df_5m['close'].iloc[-1]
     
-    bullish_choch = last_price > df_5m['high'].shift(1).iloc[-1]
-    bearish_choch = last_price < df_5m['low'].shift(1).iloc[-1]
+    in_discount = last_price < eq_level
+    in_premium = last_price > eq_level
+
+    # 4. فحص سحب السيولة (Liquidity Sweep) على فريم 15M
+    sweep_low = (df_15m['low'].iloc[-2] < dealing_range_low) and (df_15m['close'].iloc[-2] > dealing_range_low)
+    sweep_high = (df_15m['high'].iloc[-2] > dealing_range_high) and (df_15m['close'].iloc[-2] < dealing_range_high)
+
+    # 5. البحث عن Order Blocks (OB) و FVG وتغير السلوك (CHoCH) على 5M
+    bullish_ob_valid = False
+    bullish_choch = False
+    ob_low = 0
     
-    fvg_bullish = df_5m['low'].iloc[-1] > df_5m['high'].iloc[-3]
-    fvg_bearish = df_5m['high'].iloc[-1] < df_5m['low'].iloc[-3]
+    for i in range(-5, -1):
+        if df_5m['close'].iloc[i] < df_5m['open'].iloc[i]:
+            if df_5m['close'].iloc[i+1] > df_5m['high'].iloc[i]:
+                if df_5m['low'].iloc[i+2] > df_5m['high'].iloc[i]:
+                    bullish_ob_valid = True
+                    ob_low = df_5m['low'].iloc[i]
+                    break
+    
+    if df_5m['close'].iloc[-1] > df_5m['high'].iloc[-3:-1].max():
+        bullish_choch = True
 
-    signal = None
-    confluences = []
+    bearish_ob_valid = False
+    bearish_choch = False
+    ob_high = 0
+    
+    for i in range(-5, -1):
+        if df_5m['close'].iloc[i] > df_5m['open'].iloc[i]:
+            if df_5m['close'].iloc[i+1] < df_5m['low'].iloc[i]:
+                if df_5m['high'].iloc[i+2] < df_5m['low'].iloc[i]:
+                    bearish_ob_valid = True
+                    ob_high = df_5m['high'].iloc[i]
+                    break
+                    
+    if df_5m['close'].iloc[-1] < df_5m['low'].iloc[-3:-1].min():
+        bearish_choch = True
 
-    if trend_1d == "BULLISH" and bullish_choch and (fvg_bullish or last_price >= support_15m):
+    signal, confluences = None, []
+
+    # شروط صفقات الشراء (BUY)
+    if trend_1d == "BULLISH" and in_discount and bullish_ob_valid and bullish_choch:
         signal = "BUY"
-        confluences.append("1D/4H Bullish Trend")
-        confluences.append("30M Swing Structure")
-        confluences.append("15M Support Zone")
-        confluences.append("5M Bullish CHoCH + FVG")
-
-    elif trend_1d == "BEARISH" and bearish_choch and (fvg_bearish or last_price <= resistance_15m):
-        signal = "SELL"
-        confluences.append("1D/4H Bearish Trend")
-        confluences.append("30M Swing Structure")
-        confluences.append("15M Resistance Zone")
-        confluences.append("5M Bearish CHoCH + FVG")
-
-    if not signal: return None
-
-    if signal == "BUY":
-        sl = last_sw_low * 0.999
+        confluences.append("🟢 HTF Trend: Bullish")
+        confluences.append("🟢 Zone: Discount (Below 50% EQ)")
+        if sweep_low: confluences.append("💧 Sell-Side Liquidity Swept")
+        confluences.append("📦 Valid Bullish Order Block + FVG")
+        confluences.append("⚡ 5M Bullish CHoCH")
+        
+        sl = ob_low * 0.999
         risk = abs(last_price - sl)
         if risk == 0: return None
         tp1, tp2, tp3 = last_price + (risk * 2.0), last_price + (risk * 3.5), last_price + (risk * 5.0)
-    else:
-        sl = last_sw_high * 1.001
+
+    # شروط صفقات البيع (SELL)
+    elif trend_1d == "BEARISH" and in_premium and bearish_ob_valid and bearish_choch:
+        signal = "SELL"
+        confluences.append("🔴 HTF Trend: Bearish")
+        confluences.append("🔴 Zone: Premium (Above 50% EQ)")
+        if sweep_high: confluences.append("💧 Buy-Side Liquidity Swept")
+        confluences.append("📦 Valid Bearish Order Block + FVG")
+        confluences.append("⚡ 5M Bearish CHoCH")
+        
+        sl = ob_high * 1.001
         risk = abs(sl - last_price)
         if risk == 0: return None
         tp1, tp2, tp3 = last_price - (risk * 2.0), last_price - (risk * 3.5), last_price - (risk * 5.0)
 
+    if not signal: return None
+
     return {
-        'price': last_price, 'signal': signal, 'sl': sl,
-        'tp1': tp1, 'tp2': tp2, 'tp3': tp3,
-        'confluences': confluences
+        'price': last_price, 'signal': signal, 'sl': sl, 
+        'tp1': tp1, 'tp2': tp2, 'tp3': tp3, 'confluences': confluences
     }
 
-# --- رسم الشارت ---
-def generate_chart(df, symbol_name, analysis, dec):
-    try:
-        plt.style.use('dark_background')
-        fig, ax = plt.subplots(figsize=(10, 5))
-        recent_df = df.tail(50).copy()
-        up = recent_df[recent_df['close'] >= recent_df['open']]
-        down = recent_df[recent_df['close'] < recent_df['open']]
-        width = 0.6
+# --- نظام متابعة الصفقات والـ TP / SL الفوري ---
+async def monitor_active_trades(bot):
+    trades = load_active_trades()
+    updated = False
 
-        ax.vlines(up.index, up['low'], up['high'], color='#1dd1a1', linewidth=1.2)
-        ax.vlines(down.index, down['low'], down['high'], color='#ff6b6b', linewidth=1.2)
-        ax.bar(up.index, up['close'] - up['open'], width, bottom=up['open'], color='#1dd1a1')
-        ax.bar(down.index, down['open'] - down['close'], width, bottom=down['close'], color='#ff6b6b')
+    for trade in trades:
+        if trade.get('state') == 'closed': continue
 
-        fmt = f".{dec}f"
-        ax.axhline(analysis['price'], color='#c8d6e5', linestyle='-', linewidth=1.2, label=f"ENTRY: {analysis['price']:{fmt}}")
-        ax.axhline(analysis['sl'], color='#ff6b6b', linestyle='--', linewidth=1.2, label=f"SL: {analysis['sl']:{fmt}}")
-        ax.axhline(analysis['tp2'], color='#1dd1a1', linestyle=':', linewidth=1.5, label=f"TP2: {analysis['tp2']:{fmt}}")
+        symbol_name = trade['name']
+        tv_symbol, tv_exchange = MONITORED_PAIRS[symbol_name]
 
-        title_color = '#1dd1a1' if analysis['signal'] == "BUY" else '#ff6b6b'
-        ax.set_title(f"MULTI-TF SMC ENGINE ({symbol_name})", fontsize=11, color=title_color, fontweight='bold')
-        ax.legend(loc='upper left', fontsize=8)
-        ax.grid(True, alpha=0.1)
-        
-        buf = io.BytesIO()
-        plt.tight_layout()
-        plt.savefig(buf, format='png', dpi=120)
-        buf.seek(0)
-        plt.close(fig)
-        return buf
-    except:
-        return None
+        try:
+            df = tv.get_hist(symbol=tv_symbol, exchange=tv_exchange, interval=Interval.in_1_minute, n_bars=5)
+            if df is None or df.empty: continue
 
-# --- الحلقة الرئيسية ---
+            current_high = df['high'].max()
+            current_low = df['low'].min()
+            dec = trade.get('dec', 2)
+
+            msg = None
+
+            if trade['type'] == 'BUY':
+                if current_low <= trade['sl']:
+                    msg = f"❌ **TRADE CLOSED (STOP LOSS HIT)**\n\nPair: `#{symbol_name}`\nType: BUY 🔴\nSL Hit at: `{trade['sl']:.{dec}f}`"
+                    trade['state'] = 'closed'
+                elif current_high >= trade['tp3'] and trade.get('tp_hit') != 3:
+                    msg = f"🚀🚀 **TARGET 3 HIT (FULL TAKE PROFIT)** 🟢\n\nPair: `#{symbol_name}`\nPrice reached: `{trade['tp3']:.{dec}f}`\nTrade Closed with Maximum Profit!"
+                    trade['tp_hit'] = 3
+                    trade['state'] = 'closed'
+                elif current_high >= trade['tp2'] and trade.get('tp_hit') < 2:
+                    msg = f"✅✅ **TARGET 2 HIT** 🟢\n\nPair: `#{symbol_name}`\nPrice reached: `{trade['tp2']:.{dec}f}`\nMove Stop Loss to Entry Point (SL = `{trade['entry']:.{dec}f}`)!"
+                    trade['tp_hit'] = 2
+                elif current_high >= trade['tp1'] and trade.get('tp_hit', 0) < 1:
+                    msg = f"✅ **TARGET 1 HIT** 🟢\n\nPair: `#{symbol_name}`\nPrice reached: `{trade['tp1']:.{dec}f}`\nSecure Partial Profits!"
+                    trade['tp_hit'] = 1
+
+            elif trade['type'] == 'SELL':
+                if current_high >= trade['sl']:
+                    msg = f"❌ **TRADE CLOSED (STOP LOSS HIT)**\n\nPair: `#{symbol_name}`\nType: SELL 🔴\nSL Hit at: `{trade['sl']:.{dec}f}`"
+                    trade['state'] = 'closed'
+                elif current_low <= trade['tp3'] and trade.get('tp_hit') != 3:
+                    msg = f"🚀🚀 **TARGET 3 HIT (FULL TAKE PROFIT)** 🟢\n\nPair: `#{symbol_name}`\nPrice reached: `{trade['tp3']:.{dec}f}`\nTrade Closed with Maximum Profit!"
+                    trade['tp_hit'] = 3
+                    trade['state'] = 'closed'
+                elif current_low <= trade['tp2'] and trade.get('tp_hit') < 2:
+                    msg = f"✅✅ **TARGET 2 HIT** 🟢\n\nPair: `#{symbol_name}`\nPrice reached: `{trade['tp2']:.{dec}f}`\nMove Stop Loss to Entry Point (SL = `{trade['entry']:.{dec}f}`)!"
+                    trade['tp_hit'] = 2
+                elif current_low <= trade['tp1'] and trade.get('tp_hit', 0) < 1:
+                    msg = f"✅ **TARGET 1 HIT** 🟢\n\nPair: `#{symbol_name}`\nPrice reached: `{trade['tp1']:.{dec}f}`\nSecure Partial Profits!"
+                    trade['tp_hit'] = 1
+
+            if msg:
+                await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=msg, parse_mode='Markdown')
+                updated = True
+
+        except Exception as e:
+            logging.error(f"Error monitoring {symbol_name}: {e}")
+
+    if updated:
+        save_active_trades(trades)
+
+# --- الحلقة الرئيسية لتشغيل البوت ---
 async def bot_loop():
     bot = Bot(token=TELEGRAM_BOT_TOKEN)
     await asyncio.sleep(2)
-    logging.info("Multi-Timeframe SMC Engine started...")
+    logging.info("Fenix FX Pro - Institutional SMC Engine Started Successfully...")
     
     while True:
         try:
+            # 1. متابعة الصفقات المفتوحة
+            await monitor_active_trades(bot)
+
+            # 2. فحص صفقات جديدة
             active_trades = load_active_trades()
-            active_symbols = [t['name'] for t in active_trades if t['state'] != 'closed']
+            active_symbols = [t['name'] for t in active_trades if t.get('state'] != 'closed']
 
             for symbol_name, (tv_symbol, tv_exchange) in MONITORED_PAIRS.items():
                 if symbol_name in active_symbols: continue
@@ -207,11 +271,11 @@ async def bot_loop():
 
                 dec = 2 if any(x in symbol_name for x in ["USOIL", "GOLD", "BTC", "Bitcoin", "Ethereum", "Solana"]) else (3 if "JPY" in symbol_name else 5)
                 
-                chart_img = generate_chart(tfs['5M'], symbol_name, analysis, dec)
+                gif_url = BUY_GIF_URL if analysis['signal'] == "BUY" else SELL_GIF_URL
                 emoji = "🟢" if analysis['signal'] == "BUY" else "🔴"
 
                 caption = (
-                    f"🏛️ **MULTI-TF SMC STRATEGY** ⚡\n\n"
+                    f"🏛️ **FENIX FX PRO - INSTITUTIONAL SMC** ⚡\n\n"
                     f"PAIR: `#{symbol_name.replace('/', '')}`\n"
                     f"TYPE: `#{analysis['signal']}` {emoji}\n"
                     f"─────────────────\n"
@@ -220,26 +284,24 @@ async def bot_loop():
                     f"✅ **TP1:** `{analysis['tp1']:.{dec}f}`\n"
                     f"✅✅ **TP2:** `{analysis['tp2']:.{dec}f}`\n"
                     f"🚀 **TP3:** `{analysis['tp3']:.{dec}f}`\n\n"
-                    f"🔍 **Confluences:**\n" + "\n".join([f"• {c}" for c in analysis['confluences']])
+                    f"🔍 **Institutional Confluences:**\n" + "\n".join([f"• {c}" for c in analysis['confluences']])
                 )
                 
                 try:
-                    if chart_img:
-                        await bot.send_photo(chat_id=TELEGRAM_CHAT_ID, photo=chart_img, caption=caption, parse_mode='Markdown')
-                    else:
-                        await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=caption, parse_mode='Markdown')
-                    
-                    active_trades.append({
-                        'chat_id': TELEGRAM_CHAT_ID, 'name': symbol_name, 
-                        'type': analysis['signal'], 'entry': analysis['price'], 
-                        'sl': analysis['sl'], 'tp1': analysis['tp1'], 'tp2': analysis['tp2'], 'tp3': analysis['tp3'], 
-                        'state': 'open', 'dec': dec
-                    })
-                    save_active_trades(active_trades)
+                    await bot.send_animation(chat_id=TELEGRAM_CHAT_ID, animation=gif_url, caption=caption, parse_mode='Markdown')
                 except Exception as e:
-                    logging.error(f"Telegram Error: {e}")
-            
-            await asyncio.sleep(20)
+                    logging.error(f"Failed to send GIF for {symbol_name}: {e}")
+                    await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=caption, parse_mode='Markdown')
+                
+                active_trades.append({
+                    'chat_id': TELEGRAM_CHAT_ID, 'name': symbol_name, 
+                    'type': analysis['signal'], 'entry': analysis['price'], 
+                    'sl': analysis['sl'], 'tp1': analysis['tp1'], 'tp2': analysis['tp2'], 'tp3': analysis['tp3'], 
+                    'state': 'open', 'tp_hit': 0, 'dec': dec
+                })
+                save_active_trades(active_trades)
+
+            await asyncio.sleep(30)
             
         except Exception as e:
             logging.error(f"Global Loop Error: {e}")
