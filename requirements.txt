@@ -1,3 +1,4 @@
+git+https://github.com/rongard/tvdatafeed.git
 pandas
 python-telegram-bot
 requests
