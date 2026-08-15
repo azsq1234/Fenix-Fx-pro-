@@ -1,4 +1,27 @@
+import sys
+import subprocess
 import os
+
+# --- دالة التثبيت الذاتي التلقائي (تعمل عند بدء التشغيل لتجنب مشاكل النشر) ---
+def setup_environment():
+    packages = {
+        "tvdatafeed": "tvdatafeed",
+        "pandas": "pandas",
+        "python-telegram-bot": "telegram",
+        "requests": "requests",
+        "matplotlib": "matplotlib"
+    }
+    for package_name, import_name in packages.items():
+        try:
+            __import__(import_name)
+        except ImportError:
+            print(f"جاري تثبيت المكتبة الناقصة: {package_name}...")
+            subprocess.check_call([sys.executable, "-m", "pip", "install", package_name])
+
+# تنفيذ التثبيت أولاً
+setup_environment()
+
+# --- الاستيرادات الأساسية بعد ضمان التثبيت ---
 import json
 import io
 import threading
@@ -97,28 +120,21 @@ def analyze_multi_timeframe(tfs):
     df_15m = tfs['15M']
     df_5m = tfs['5M']
 
-    # 1. 1D: تحليل الاتجاه العام (مقارنة السعر الحالي بمتوسط أو قمة/قاع اليوم السابق)
     trend_1d = "BULLISH" if df_1d['Close'].iloc[-1] > df_1d['Close'].iloc[-5] else "BEARISH"
-
-    # 2. 4H: معرفة هيكلة السوق
     struct_4h = "BULLISH" if df_4h['Close'].iloc[-1] > df_4h['Close'].iloc[-3] else "BEARISH"
 
-    # لو اتجاه اليوم والـ 4 ساعات غير متطابقين، نلغي الصفقة لضمان القوة
     if trend_1d != struct_4h:
         return None
 
-    # 3. 30M: معرفة القمم والقيعان الرئيسية
     sw_highs = df_30m['High'][(df_30m['High'] > df_30m['High'].shift(1)) & (df_30m['High'] > df_30m['High'].shift(-1))]
     sw_lows = df_30m['Low'][(df_30m['Low'] < df_30m['Low'].shift(1)) & (df_30m['Low'] < df_30m['Low'].shift(-1))]
     if len(sw_highs) < 1 or len(sw_lows) < 1: return None
     last_sw_high = sw_highs.iloc[-1]
     last_sw_low = sw_lows.iloc[-1]
 
-    # 4. 15M: معرفة الدعوم والمقاومات (Zones)
     support_15m = df_15m['Low'].tail(30).min()
     resistance_15m = df_15m['High'].tail(30).max()
 
-    # 5. 5M: تأكيد الإشارة والدخول (CHoCH + FVG)
     last_price = df_5m['Close'].iloc[-1]
     
     bullish_choch = last_price > df_5m['High'].shift(1).iloc[-1]
@@ -146,7 +162,6 @@ def analyze_multi_timeframe(tfs):
 
     if not signal: return None
 
-    # حساب الستوب والأهداف بناءً على فريم الـ 5 دقائق والـ 15 دقيقة
     if signal == "BUY":
         sl = last_sw_low * 0.999
         risk = abs(last_price - sl)
