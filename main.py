@@ -14,7 +14,7 @@ TELEGRAM_BOT_TOKEN = "8923196852:AAEvbKmOtpXfrykk9APpuLYM6D7BIwiIIrE"
 TELEGRAM_CHAT_ID = "-1004382901216"
 TRADES_FILE = "active_trades.json"
 
-# --- روابط صور الـ GIF المحدثة (Tenor) ---
+# --- روابط صور الـ GIF المحدثة ---
 BUY_GIF_URL = "https://media.tenor.com/71239O9E-BIAAAAC/bull-market.gif"
 SELL_GIF_URL = "https://media.tenor.com/13_g8pBf1KkAAAAC/bear-market.gif"
 
@@ -168,75 +168,135 @@ def analyze_multi_timeframe(tfs):
         sl = ob_high * 1.001
         risk = abs(sl - last_price)
         if risk == 0: return None
-        tp1, tp2, tp3 = last_price - (risk * إليك الكود الكامل والجاهز للنسخ واللصق لبوت **Fenix Fx pro**. هذا الكود مجهز ليعمل مباشرة، ويمكنك تشغيله بسهولة عبر تطبيقات الهاتف (مثل Pydroid 3 أو Termux).
+        tp1, tp2, tp3 = last_price - (risk * 2.0), last_price - (risk * 3.5), last_price - (risk * 5.0)
 
-```python
-import telebot
-import random
-import requests
+    if not signal: return None
 
-# ضع التوكن (Token) الخاص بالبوت هنا بين علامتي التنصيص
-TOKEN = 'ضع_التوكن_هنا'
-bot = telebot.TeleBot(TOKEN)
+    return {
+        'price': last_price, 'signal': signal, 'sl': sl, 
+        'tp1': tp1, 'tp2': tp2, 'tp3': tp3, 'confluences': confluences
+    }
 
-# رسالة الترحيب عند بدء البوت
-@bot.message_handler(commands=['start', 'help'])
-def send_welcome(message):
-    welcome_text = """
-    مرحباً بك في بوت 🦅 Fenix Fx pro 🦅
-    
-    أنا هنا لمساعدتك في تحليل السوق وتقديم الإشارات بناءً على:
-    - مفاهيم الأموال الذكية (SMC)
-    - التحليل الفني (مستويات الفيبوناتشي)
-    - أخبار السوق
-    
-    استخدم الأوامر التالية للبدء:
-    /signal - للحصول على إشارة تداول جديدة
-    /news - لمعرفة آخر أخبار السوق
-    """
-    bot.reply_to(message, welcome_text)
+# --- نظام متابعة الصفقات والـ TP / SL الفوري ---
+async def monitor_active_trades(bot):
+    trades = load_active_trades()
+    updated = False
 
-# أمر إشارات التداول (SMC & Fibonacci)
-@bot.message_handler(commands=['signal'])
-def send_signal(message):
-    # قائمة الأزواج والاتجاهات للمحاكاة
-    pairs = ['EUR/USD', 'GBP/USD', 'XAU/USD', 'BTC/USDT']
-    directions = ['شراء 🟢', 'بيع 🔴']
-    
-    pair = random.choice(pairs)
-    direction = random.choice(directions)
-    
-    # حساب مستويات افتراضية بناءً على الفيبوناتشي
-    entry = round(random.uniform(1.0500, 1.1000), 4)
-    tp = round(entry + 0.0050 if direction == 'شراء 🟢' else entry - 0.0050, 4)
-    sl = round(entry - 0.0020 if direction == 'شراء 🟢' else entry + 0.0020, 4)
-    
-    signal_text = f"""
-    📊 إشارة جديدة من Fenix Fx pro 📊
-    
-    الزوج: {pair}
-    الاتجاه: {direction} (تأكيد SMC)
-    
-    منطقة الدخول: {entry} (ارتداد من مستوى فيبوناتشي 61.8%)
-    الهدف (TP): {tp}
-    وقف الخسارة (SL): {sl}
-    
-    ⚠️ تداول بحذر وتذكر إدارة رأس المال.
-    """
-    bot.reply_to(message, signal_text)
+    for trade in trades:
+        if trade.get('state') == 'closed': continue
 
-# أمر أخبار السوق
-@bot.message_handler(commands=['news'])
-def send_news(message):
-    news_text = """
-    📰 تحديثات السوق الحالية:
-    
-    - ترقب صدور بيانات اقتصادية هامة اليوم قد تؤثر على السيولة.
-    - يُنصح بتجنب التداول وقت صدور الأخبار القوية (High Impact News).
-    - تأكد من مراقبة التقويم الاقتصادي قبل فتح أي صفقات جديدة.
-    """
-    bot.reply_to(message, news_text)
+        symbol_name = trade['name']
+        tv_symbol, tv_exchange = MONITORED_PAIRS[symbol_name]
 
-# تشغيل البوت بشكل مستمر
-print("🚀 تم تشغيل بوت Fenix Fx pro بنجاح... بانتظار الأوامر.")
-bot.polling(none_stop=True)
+        try:
+            df = tv.get_hist(symbol=tv_symbol, exchange=tv_exchange, interval=Interval.in_1_minute, n_bars=5)
+            if df is None or df.empty: continue
+
+            current_high = df['high'].max()
+            current_low = df['low'].min()
+            dec = trade.get('dec', 2)
+
+            msg = None
+
+            if trade['type'] == 'BUY':
+                if current_low <= trade['sl']:
+                    msg = f"❌ **TRADE CLOSED (STOP LOSS HIT)**\n\nPair: `#{symbol_name}`\nType: BUY 🔴\nSL Hit at: `{trade['sl']:.{dec}f}`"
+                    trade['state'] = 'closed'
+                elif current_high >= trade['tp3'] and trade.get('tp_hit') != 3:
+                    msg = f"🚀🚀 **TARGET 3 HIT (FULL TAKE PROFIT)** 🟢\n\nPair: `#{symbol_name}`\nPrice reached: `{trade['tp3']:.{dec}f}`\nTrade Closed with Maximum Profit!"
+                    trade['tp_hit'] = 3
+                    trade['state'] = 'closed'
+                elif current_high >= trade['tp2'] and trade.get('tp_hit') < 2:
+                    msg = f"✅✅ **TARGET 2 HIT** 🟢\n\nPair: `#{symbol_name}`\nPrice reached: `{trade['tp2']:.{dec}f}`\nMove Stop Loss to Entry Point (SL = `{trade['entry']:.{dec}f}`)!"
+                    trade['tp_hit'] = 2
+                elif current_high >= trade['tp1'] and trade.get('tp_hit', 0) < 1:
+                    msg = f"✅ **TARGET 1 HIT** 🟢\n\nPair: `#{symbol_name}`\nPrice reached: `{trade['tp1']:.{dec}f}`\nSecure Partial Profits!"
+                    trade['tp_hit'] = 1
+
+            elif trade['type'] == 'SELL':
+                if current_high >= trade['sl']:
+                    msg = f"❌ **TRADE CLOSED (STOP LOSS HIT)**\n\nPair: `#{symbol_name}`\nType: SELL 🔴\nSL Hit at: `{trade['sl']:.{dec}f}`"
+                    trade['state'] = 'closed'
+                elif current_low <= trade['tp3'] and trade.get('tp_hit') != 3:
+                    msg = f"🚀🚀 **TARGET 3 HIT (FULL TAKE PROFIT)** 🟢\n\nPair: `#{symbol_name}`\nPrice reached: `{trade['tp3']:.{dec}f}`\nTrade Closed with Maximum Profit!"
+                    trade['tp_hit'] = 3
+                    trade['state'] = 'closed'
+                elif current_low <= trade['tp2'] and trade.get('tp_hit') < 2:
+                    msg = f"✅✅ **TARGET 2 HIT** 🟢\n\nPair: `#{symbol_name}`\nPrice reached: `{trade['tp2']:.{dec}f}`\nMove Stop Loss to Entry Point (SL = `{trade['entry']:.{dec}f}`)!"
+                    trade['tp_hit'] = 2
+                elif current_low <= trade['tp1'] and trade.get('tp_hit', 0) < 1:
+                    msg = f"✅ **TARGET 1 HIT** 🟢\n\nPair: `#{symbol_name}`\nPrice reached: `{trade['tp1']:.{dec}f}`\nSecure Partial Profits!"
+                    trade['tp_hit'] = 1
+
+            if msg:
+                await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=msg, parse_mode='Markdown')
+                updated = True
+
+        except Exception as e:
+            logging.error(f"Error monitoring {symbol_name}: {e}")
+
+    if updated:
+        save_active_trades(trades)
+
+# --- الحلقة الرئيسية لتشغيل البوت ---
+async def bot_loop():
+    bot = Bot(token=TELEGRAM_BOT_TOKEN)
+    await asyncio.sleep(2)
+    logging.info("Fenix FX Pro - Institutional SMC Engine Started Successfully...")
+    
+    while True:
+        try:
+            await monitor_active_trades(bot)
+
+            active_trades = load_active_trades()
+            active_symbols = [t['name'] for t in active_trades if t.get('state') != 'closed']
+
+            for symbol_name, (tv_symbol, tv_exchange) in MONITORED_PAIRS.items():
+                if symbol_name in active_symbols: continue
+                
+                tfs = get_multi_tf_data(tv_symbol, tv_exchange)
+                if not tfs: continue
+
+                analysis = analyze_multi_timeframe(tfs)
+                if not analysis: continue
+
+                dec = 2 if any(x in symbol_name for x in ["USOIL", "GOLD", "BTC", "Bitcoin", "Ethereum", "Solana"]) else (3 if "JPY" in symbol_name else 5)
+                
+                gif_url = BUY_GIF_URL if analysis['signal'] == "BUY" else SELL_GIF_URL
+                emoji = "🟢" if analysis['signal'] == "BUY" else "🔴"
+
+                caption = (
+                    f"🏛️ **FENIX FX PRO - INSTITUTIONAL SMC** ⚡\n\n"
+                    f"PAIR: `#{symbol_name.replace('/', '')}`\n"
+                    f"TYPE: `#{analysis['signal']}` {emoji}\n"
+                    f"─────────────────\n"
+                    f"🎯 **ENTRY:** `{analysis['price']:.{dec}f}`\n"
+                    f"🛡️ **SL:** `{analysis['sl']:.{dec}f}`\n\n"
+                    f"✅ **TP1:** `{analysis['tp1']:.{dec}f}`\n"
+                    f"✅✅ **TP2:** `{analysis['tp2']:.{dec}f}`\n"
+                    f"🚀 **TP3:** `{analysis['tp3']:.{dec}f}`\n\n"
+                    f"🔍 **Institutional Confluences:**\n" + "\n".join([f"• {c}" for c in analysis['confluences']])
+                )
+                
+                try:
+                    await bot.send_animation(chat_id=TELEGRAM_CHAT_ID, animation=gif_url, caption=caption, parse_mode='Markdown')
+                except Exception as e:
+                    logging.error(f"Failed to send GIF for {symbol_name}: {e}")
+                    await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=caption, parse_mode='Markdown')
+                
+                active_trades.append({
+                    'chat_id': TELEGRAM_CHAT_ID, 'name': symbol_name, 
+                    'type': analysis['signal'], 'entry': analysis['price'], 
+                    'sl': analysis['sl'], 'tp1': analysis['tp1'], 'tp2': analysis['tp2'], 'tp3': analysis['tp3'], 
+                    'state': 'open', 'tp_hit': 0, 'dec': dec
+                })
+                save_active_trades(active_trades)
+
+            await asyncio.sleep(30)
+            
+        except Exception as e:
+            logging.error(f"Global Loop Error: {e}")
+            await asyncio.sleep(30)
+
+if __name__ == "__main__":
+    asyncio.run(bot_loop())
